@@ -15,7 +15,6 @@ import {
   Tabs,
   Tab,
   Divider,
-  CircularProgress,
 } from "@mui/material";
 import DoneIcon from '@mui/icons-material/Done';
 import HourglassBottomIcon from '@mui/icons-material/HourglassBottom';
@@ -76,7 +75,6 @@ const AssessmentPage = () => {
   const [hasAutoNavigated, setHasAutoNavigated] = useState(false);
   const [savedAnswers, setSavedAnswers] = useState<Record<string, any>>({});
   const [realTimeSectionStatus, setRealTimeSectionStatus] = useState<Record<string, string>>({});
-  const [isInitializing, setIsInitializing] = useState(true); // Add initialization state
   const autoNavigationAttempted = useRef(false);
   const lastAutoNavigationTime = useRef(0);
 
@@ -234,17 +232,6 @@ const AssessmentPage = () => {
   useEffect(() => {
     console.log('🔄 useEffect triggered:', { mounted, isUserSet, templatesData: !!templatesData, assessmentId });
     if (!mounted || !isUserSet) return;
-    
-    // Reset initialization state when new data comes in
-    if (templatesData) {
-      console.log('🔄 New templatesData detected - resetting initialization state');
-      setIsInitializing(true);
-      
-      // Force reset auto-navigation state for popup flow
-      setHasAutoNavigated(false);
-      autoNavigationAttempted.current = false;
-      lastAutoNavigationTime.current = 0;
-    }
 
     // If we have an assessmentId in URL but no templatesData, fetch the assessment
     if (assessmentId && !templatesData && !assessmentLoading) {
@@ -258,12 +245,6 @@ const AssessmentPage = () => {
       console.log('❌ No templates data or assessmentId available, redirecting to assessment page');
       router.push("/assessment");
       return;
-    }
-
-    // If we have templatesData but no assessmentId (new assessment), mark initialization as complete
-    if (templatesData && !assessmentId) {
-      console.log('✅ New assessment - marking initialization as complete');
-      setIsInitializing(false);
     }
 
     // If we're still loading assessment data, wait
@@ -472,17 +453,10 @@ const AssessmentPage = () => {
         // Process the single template
         await processTemplates([formattedTemplate]);
 
-        // If this is a new assessment (no assessmentId), mark initialization as complete
-        if (!assessmentId) {
-          console.log('✅ New assessment template loaded - marking initialization as complete');
-          setIsInitializing(false);
-        }
-
       } catch (e) {
         console.error("❌ Error loading template from context data:", e);
         alert("Failed to load template");
         router.push("/dashboard");
-        setIsInitializing(false); // Mark initialization as complete even on error
       }
     };
 
@@ -504,20 +478,12 @@ const AssessmentPage = () => {
 
       console.log('🔄 Setting templatesData from fetched assessment:', mockTemplatesData);
       setTemplatesDataState(mockTemplatesData);
-    } else if (assessmentData?.getAssessment?.status === 'error') {
-      console.log('❌ Error fetching assessment data');
-      setIsInitializing(false); // Mark initialization as complete even on error
     }
   }, [assessmentData]);
 
   useEffect(() => {
     setMounted(true);
     setIsUserSet(true);
-    
-    // Force initialization state to true when component mounts
-    // This ensures we show loading state until auto-navigation completes
-    setIsInitializing(true);
-    console.log('🔄 Component mounted - setting initialization state to true');
   }, []);
 
   // Fallback timeout to handle cases where templates data is not available
@@ -1789,8 +1755,6 @@ const AssessmentPage = () => {
       setHasAutoNavigated(false);
       autoNavigationAttempted.current = false;
       lastAutoNavigationTime.current = 0;
-      setIsInitializing(true); // Reset initialization state when new data comes in
-      console.log('🔄 Templates data changed - resetting auto-navigation and initialization state');
     }
   }, [templatesData]);
 
@@ -1802,31 +1766,10 @@ const AssessmentPage = () => {
       const timeSinceLastCall = now - lastAutoNavigationTime.current;
       
       console.log(`🔄 AUTO-NAVIGATION CALLED [${callId}]: template=${!!template}, mounted=${mounted}, hasAutoNavigated=${hasAutoNavigated}, isEditing=${templatesData?.isEditing}, attempted=${autoNavigationAttempted.current}, timeSinceLastCall=${timeSinceLastCall}ms`);
-      console.log(`🔄 Templates data structure:`, {
-        hasAssessment: !!templatesData?.assessment,
-        hasSections: !!templatesData?.assessment?.sections,
-        sectionsLength: templatesData?.assessment?.sections?.length,
-        isEditing: templatesData?.isEditing,
-        assessmentId: templatesData?.assessmentId
-      });
       
       if (!template || !mounted || hasAutoNavigated || autoNavigationAttempted.current) {
         console.log(`🚫 Auto-navigation skipped [${callId}]: template=${!!template}, mounted=${mounted}, hasAutoNavigated=${hasAutoNavigated}, attempted=${autoNavigationAttempted.current}`);
         return;
-      }
-
-      // Special handling for popup flow - if we have assessment data but no specific navigation target,
-      // we should still try to navigate to the correct position
-      if (templatesData?.isEditing && templatesData?.assessment?.sections && !templatesData?.assessment?.sections?.some(s => s.progress?.nextQuestionId)) {
-        console.log(`🔄 Popup flow detected - no specific navigation target, using first incomplete section`);
-        // This will be handled by the fallback logic below
-      }
-
-      // Additional check: if we're in edit mode but no specific navigation logic applies,
-      // we should still complete initialization to prevent infinite loading
-      if (templatesData?.isEditing && templatesData?.assessment?.sections) {
-        console.log(`🔄 Edit mode detected - ensuring initialization completes`);
-        // The logic below will handle finding the correct position
       }
 
       // Prevent multiple calls within 2 seconds
@@ -1866,7 +1809,6 @@ const AssessmentPage = () => {
       // Check if we have assessment data from getAssessment API
       if (!templatesData?.assessment?.sections) {
         console.log(`🚫 No assessment data available for auto-navigation`);
-        setIsInitializing(false); // Mark initialization as complete
         return;
       }
 
@@ -2074,7 +2016,6 @@ const AssessmentPage = () => {
         }
 
         setHasAutoNavigated(true);
-        setIsInitializing(false); // Mark initialization as complete
         console.log(`✅ Auto-navigation completed [${callId}]. Final position: Section ${targetSectionIndex}, Question ${targetQuestionIndex}`);
         
         // Reset the auto-navigation flag after a delay to allow normal section changes
@@ -2085,49 +2026,12 @@ const AssessmentPage = () => {
       } else {
         console.log(`🚫 No valid navigation target found [${callId}]`);
         setHasAutoNavigated(true);
-        setIsInitializing(false); // Mark initialization as complete even if no target found
-        
-        // For popup flow, if no specific target found, just start from the beginning
-        if (templatesData?.isEditing) {
-          console.log(`🔄 Popup flow - no specific target found, starting from beginning`);
-          setCurrentSectionIndex(0);
-          setCurrentQuestionInSection(0);
-        }
       }
     };
 
     // Run auto-navigation after a delay to ensure all data is loaded
-    const timer = setTimeout(autoNavigateUsingApiData, 1000);
-    
-    // For popup flow, also try immediate navigation if data is already available
-    if (templatesData?.isEditing && templatesData?.assessment?.sections) {
-      console.log(`🔄 Popup flow detected - trying immediate navigation`);
-      const immediateTimer = setTimeout(() => {
-        if (isInitializing && !hasAutoNavigated) {
-          console.log(`🔄 Immediate popup navigation attempt`);
-          autoNavigateUsingApiData();
-        }
-      }, 100);
-      
-      return () => {
-        clearTimeout(timer);
-        clearTimeout(fallbackTimer);
-        clearTimeout(immediateTimer);
-      };
-    }
-    
-    // Fallback timeout to ensure initialization completes even if auto-navigation doesn't run
-    const fallbackTimer = setTimeout(() => {
-      if (isInitializing) {
-        console.log(`⏰ Fallback timeout: Marking initialization as complete`);
-        setIsInitializing(false);
-      }
-    }, 2000);
-    
-    return () => {
-      clearTimeout(timer);
-      clearTimeout(fallbackTimer);
-    };
+  const timer = setTimeout(autoNavigateUsingApiData, 1000);
+    return () => clearTimeout(timer);
   }, [template, mounted, hasAutoNavigated, templatesData, sectionIndexParam, questionIndexParam, currentSectionIndex, currentQuestionInSection]);
 
   // Manual trigger for testing (accessible from browser console)
@@ -2542,25 +2446,6 @@ const AssessmentPage = () => {
 
             {/* Current Question Display */}
             {(() => {
-              // Show loading state during initialization to prevent flash of first question
-              if (isInitializing) {
-                return (
-                  <Box sx={{ 
-                    textAlign: 'center', 
-                    py: 8,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: 2
-                  }}>
-                    <CircularProgress size={40} sx={{ color: '#3b82f6' }} />
-                    <Typography variant="h6" color="text.secondary">
-                      Loading assessment...
-                    </Typography>
-                  </Box>
-                );
-              }
-
               const currentQuestion = getCurrentQuestion();
               if (!currentQuestion) {
                 return (

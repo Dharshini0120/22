@@ -1,0 +1,220 @@
+import React from 'react';
+import {
+  Box,
+  Typography,
+  Select,
+  MenuItem,
+  IconButton
+} from '@mui/material';
+import {
+  FirstPage as FirstPageIcon,
+  LastPage as LastPageIcon,
+  ChevronLeft as ChevronLeftIcon,
+  ChevronRight as ChevronRightIcon
+} from '@mui/icons-material';
+
+interface CustomPaginationProps {
+  currentPage: number;
+  totalPages: number;
+  rowsPerPage: number;
+  totalItems: number;
+  onPageChange: (page: number) => void;
+  onRowsPerPageChange: (rowsPerPage: number) => void;
+  rowsPerPageOptions?: number[];
+}
+
+const CustomPagination: React.FC<CustomPaginationProps> = ({
+  currentPage,
+  totalPages,
+  rowsPerPage,
+  totalItems,
+  onPageChange,
+  onRowsPerPageChange,
+  rowsPerPageOptions = [5, 10, 20]
+}) => {
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * rowsPerPage + 1;
+  const endItem = totalItems === 0 ? 0 : Math.min(currentPage * rowsPerPage, totalItems);
+
+  return (
+    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 3 }}>
+      {/* Left side: Rows per page */}
+      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+        <Typography variant="body2" sx={{ mr: 1, color: '#6c757d' }}>
+          Rows per page:
+        </Typography>
+        <Select
+          value={rowsPerPage}
+          onChange={(e) => onRowsPerPageChange(e.target.value as number)}
+          size="small"
+          sx={{
+            '& .MuiSelect-select': {
+              py: 0.5,
+              px: 1,
+              fontSize: '14px',
+            },
+            '& .MuiOutlinedInput-notchedOutline': {
+              borderColor: '#dee2e6',
+            },
+            '&:hover .MuiOutlinedInput-notchedOutline': {
+              borderColor: '#adb5bd',
+            },
+            '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+              borderColor: '#0d6efd',
+            },
+          }}
+        >
+          {rowsPerPageOptions.map((option) => (
+            <MenuItem key={option} value={option}>
+              {option}
+            </MenuItem>
+          ))}
+        </Select>
+      </Box>
+
+      {/* Right side: Pagination buttons and Showing info grouped together */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        {/* Pagination buttons */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          {/* First page button */}
+          <IconButton
+            onClick={() => onPageChange(1)}
+            disabled={currentPage === 1}
+            size="small"
+            sx={{
+              border: '1px solid #dee2e6',
+              borderRadius: '4px',
+              '&:hover': {
+                backgroundColor: '#f8f9fa',
+                borderColor: '#adb5bd',
+              },
+              '&.Mui-disabled': {
+                borderColor: '#e9ecef',
+                color: '#adb5bd',
+              },
+            }}
+          >
+            <FirstPageIcon fontSize="small" />
+          </IconButton>
+
+          {/* Previous page button */}
+          <IconButton
+            onClick={() => onPageChange(currentPage - 1)}
+            disabled={currentPage === 1}
+            size="small"
+            sx={{
+              border: '1px solid #dee2e6',
+              borderRadius: '4px',
+              '&:hover': {
+                backgroundColor: '#f8f9fa',
+                borderColor: '#adb5bd',
+              },
+              '&.Mui-disabled': {
+                borderColor: '#e9ecef',
+                color: '#adb5bd',
+              },
+            }}
+          >
+            <ChevronLeftIcon fontSize="small" />
+          </IconButton>
+
+          {/* Page numbers */}
+          {totalPages === 0 ? (
+            <IconButton
+              size="small"
+              disabled
+              sx={{
+                border: '1px solid #e9ecef',
+                borderRadius: '4px',
+                minWidth: '32px',
+                height: '32px',
+                fontSize: '14px',
+                fontWeight: 400,
+                backgroundColor: 'transparent',
+                color: '#adb5bd',
+                cursor: 'not-allowed',
+              }}
+            >
+              0
+            </IconButton>
+          ) : (
+            Array.from({ length: Math.min(4, totalPages) }, (_, i) => {
+              const pageNum = i + 1;
+              return (
+                <IconButton
+                  key={pageNum}
+                  onClick={() => onPageChange(pageNum)}
+                  size="small"
+                  sx={{
+                    border: '1px solid #dee2e6',
+                    borderRadius: '4px',
+                    minWidth: '32px',
+                    height: '32px',
+                    fontSize: '14px',
+                    fontWeight: currentPage === pageNum ? 600 : 400,
+                    backgroundColor: currentPage === pageNum ? '#0d6efd' : 'transparent',
+                    color: currentPage === pageNum ? '#fff' : '#6c757d',
+                    '&:hover': {
+                      backgroundColor: currentPage === pageNum ? '#0b5ed7' : '#f8f9fa',
+                      borderColor: '#adb5bd',
+                    },
+                  }}
+                >
+                  {pageNum}
+                </IconButton>
+              );
+            })
+          )}
+
+          {/* Next page button */}
+          <IconButton
+            onClick={() => onPageChange(currentPage + 1)}
+            disabled={currentPage === totalPages}
+            size="small"
+            sx={{
+              border: '1px solid #dee2e6',
+              borderRadius: '4px',
+              '&:hover': {
+                backgroundColor: '#f8f9fa',
+                borderColor: '#adb5bd',
+              },
+              '&.Mui-disabled': {
+                borderColor: '#e9ecef',
+                color: '#adb5bd',
+              },
+            }}
+          >
+            <ChevronRightIcon fontSize="small" />
+          </IconButton>
+
+          {/* Last page button */}
+          <IconButton
+            onClick={() => onPageChange(totalPages)}
+            disabled={currentPage === totalPages}
+            size="small"
+            sx={{
+              border: '1px solid #dee2e6',
+              borderRadius: '4px',
+              '&:hover': {
+                backgroundColor: '#f8f9fa',
+                borderColor: '#adb5bd',
+              },
+              '&.Mui-disabled': {
+                borderColor: '#e9ecef',
+                color: '#adb5bd',
+              },
+            }}
+          >
+            <LastPageIcon fontSize="small" />
+          </IconButton>
+        </Box>
+
+        {/* Showing info */}
+        <Typography variant="body2" color="#6c757d" sx={{ fontSize: '14px' }}>
+          Showing {startItem} - {endItem} out of {totalItems}
+        </Typography>
+      </Box>
+    </Box>
+  );
+};
+
+export default CustomPagination; 

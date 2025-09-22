@@ -1,0 +1,1636 @@
+"use client";
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Box,
+  Typography,
+  Button,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Radio,
+  RadioGroup,
+  FormControlLabel,
+  FormControl,
+  Checkbox,
+  TextField,
+  Chip,
+  CircularProgress,
+  Alert
+} from '@mui/material';
+import {
+  ExpandMore as ExpandMoreIcon,
+  Done as DoneIcon,
+  HourglassBottom as HourglassBottomIcon,
+  ArrowBack as ArrowBackIcon,
+  DoneAll as DoneAllIcon,
+  Info as InfoIcon
+} from '@mui/icons-material';
+import SaveIcon from '@mui/icons-material/Save';
+import { useMutation } from '@apollo/client';
+import { UPDATE_ASSESSMENT_MUTATION, UpdateAssessmentData, UpdateAssessmentInput } from '../../../graphql/templates.service';
+import { getTemplatesData } from '../../../utils/templatesStore';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useLazyQuery } from '@apollo/client';
+import { useSelector } from 'react-redux';
+import { RootState } from '../../../store/store';
+
+import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { GET_ASSESSMENT_QUERY } from '../../../graphql/templates.service';
+
+interface Answer {
+  questionId: string;
+  answer: string | string[];
+  questionText: string;
+  questionType: string;
+  options?: string[];
+  isRequired?: boolean;
+}
+
+interface Section {
+  id: string;
+  name: string;
+  answers: Answer[];
+  isCompleted: boolean;
+  answeredCount?: number;
+  totalCount?: number;
+}
+
+interface AssessmentData {
+  assessmentId: string;
+  userId: string;
+  facilityId: string;
+  service_id: string[];
+  sections: {
+    sectionId: string;
+    sectionName: string;
+    sectionIndex: number;
+    questionnaire: {
+      nodes: Array<{
+        id: string;
+        type: string;
+        data: {
+          question: string;
+          questionType: string;
+          options: string[];
+          isRequired: boolean;
+          optionsData: Array<{
+            text: string;
+            score: string;
+            referralText: string;
+          }>;
+        };
+      }>;
+    };
+    answers: Array<{
+      questionId: string;
+      answer: string | string[];
+      answeredAt: string;
+    }>;
+    progress: {
+      currentQuestionIndex: number;
+      totalQuestionsInSection: number;
+      answeredQuestionsInSection: number;
+      nextQuestionId?: string | number;
+      status?: 'inProgress' | 'blocked' | 'completed';
+    };
+  }[];
+  overallProgress: {
+    currentSectionIndex: number;
+    totalSections: number;
+    overallProgress: number;
+    totalQuestions: number;
+    answeredQuestions: number;
+    status: 'inProgress' | 'completed' | 'blocked';
+  };
+}
+
+interface GetAssessmentResponse {
+  getAssessment: {
+    status: string;
+    message: string;
+    statusCode: number;
+    assessment: AssessmentData;
+    error: string | null;
+  };
+}
+
+const AssessmentReview = () => {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const assessmentId = searchParams.get('id');
+  const mode = searchParams.get('mode'); // 'view' mode hides action buttons
+
+  // Get user information from Redux store
+  const { user } = useSelector((state: RootState) => state.auth);
+
+  console.log('Component rendered, searchParams:', searchParams);
+  console.log('assessmentId extracted:', assessmentId);
+  
+  const [sections, setSections] = useState<Section[]>([]);
+  const [expandedSection, setExpandedSection] = useState<string>('');
+  
+  // Assessment data state
+  const [userId, setUserId] = useState<string>('');
+  const [facilityId, setFacilityId] = useState<string>('');
+  const [sectionVersionId, setSectionVersionId] = useState<string>('');
+  const [overallProgressPercentage, setOverallProgressPercentage] = useState<number>(0);
+  const [assessmentStatus, setAssessmentStatus] = useState<'completed' | 'inProgress' | 'blocked'>('inProgress');
+
+  // Update assessment mutation
+  const [updateAssessment] = useMutation<UpdateAssessmentData>(UPDATE_ASSESSMENT_MUTATION);
+
+  useEffect(() => {
+    // Load assessment data from templates store first
+    const templatesData = getTemplatesData();
+    console.log('🔍 Templates store data:', templatesData);
+    
+    if (templatesData?.assessment) {
+      const assessmentData = templatesData.assessment;
+      console.log('📊 Assessment data from store:', assessmentData);
+      
+      setUserId(assessmentData.userId || '');
+      setFacilityId(assessmentData.facilityId || '');
+      
+      if (assessmentData.questionnaire && assessmentData.questionnaire.length > 0) {
+        setSectionVersionId(assessmentData.questionnaire[0].sectionVersionId);
+      }
+      
+      // Transform the assessment data to sections format
+      if (assessmentData.sections && assessmentData.sections.length > 0) {
+        console.log("review======>",assessmentData.sections);
+        const transformedSections = assessmentData.sections.map((section: any) => {
+          const answers = transformQuestionnaireToAnswers(section.questionnaire?.nodes || [], section.answers || []);
+
+          // Calculate completion status based on answered questions
+          const answeredQuestions = answers.filter(answer =>
+            answer.answer &&
+            !(Array.isArray(answer.answer) && answer.answer.length === 0) &&
+            !(typeof answer.answer === 'string' && answer.answer.trim() === '')
+          ).length;
+
+          const totalQuestions = answers.length;
+          const isCompleted = totalQuestions > 0 && answeredQuestions === totalQuestions;
+
+          return {
+            id: section.sectionId || `section-${section.sectionIndex || 0}`,
+            name: section.sectionName || `Section ${(section.sectionIndex || 0) + 1}`,
+            isCompleted,
+            answers,
+            answeredCount: answeredQuestions,
+            totalCount: totalQuestions
+          };
+        }).filter((section: any) => section.answers.length > 0); // Only show sections that have questions
+        
+        console.log('Transformed sections from store:', transformedSections);
+        setSections(transformedSections);
+        
+        // Don't expand any section by default
+        setExpandedSection('');
+        setLoading(false);
+        return; // Don't fetch from API if we have data from store
+      } else {
+        setLoading(false);
+        return;
+      }
+    } else {
+      console.log('⚠️ No assessment data found in store');
+    }
+    
+    // Only fetch from API if no data in store
+    if (assessmentId) {
+      fetchAssessmentData();
+    } else {
+      setLoading(false);
+    }
+  }, [assessmentId]);
+
+  const [assessmentData, setAssessmentData] = useState<AssessmentData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // GraphQL query to fetch assessment data
+  const [getAssessment, { loading: queryLoading }] = useLazyQuery<GetAssessmentResponse>(
+    GET_ASSESSMENT_QUERY,
+    {
+      variables: { assessmentId },
+      fetchPolicy: 'cache-and-network',
+      onError: () => {
+        setLoading(false);
+      }
+    }
+  )
+
+  const transformQuestionnaireToAnswers = useCallback((nodes: Array<{
+    id: string;
+    data: {
+      question: string;
+      questionType: string;
+      options: string[];
+      isRequired: boolean;
+    };
+  }>, existingAnswers: Array<{
+    questionId: string;
+    answer: string | string[];
+  }>): Answer[] => {
+    // Process ALL questions (both answered and unanswered)
+    const answers: Answer[] = [];
+
+    // Create a map of existing answers for quick lookup
+    const answerMap = new Map();
+    existingAnswers.forEach(answer => {
+      answerMap.set(answer.questionId, answer.answer);
+    });
+
+    // Process all question nodes
+    nodes.forEach((questionNode) => {
+      if (questionNode && questionNode.data && questionNode.data.question) {
+        const existingAnswer = answerMap.get(questionNode.id);
+
+        answers.push({
+          questionId: questionNode.id,
+          questionText: questionNode.data.question,
+          questionType: questionNode.data.questionType || 'text',
+          options: questionNode.data.options || [],
+          isRequired: questionNode.data.isRequired || false,
+          answer: existingAnswer || '' // Empty string for unanswered questions
+        });
+      }
+    });
+
+    return answers;
+  }, []);
+
+  const norm = (s?: string) => (s ?? "").trim().toLowerCase();
+
+type RFNode = {
+  id: string;
+  data?: {
+    options?: string[];
+    optionsData?: { text?: string; referralText?: string }[];
+    edges?: any[]; // local edges in node.data.edges (sometimes present)
+  };
+};
+
+type RFEdge = {
+  source: string;
+  target: string;
+  data?: { sourceHandle?: string };
+  sourceHandle?: string; // sometimes present at top level
+};
+
+function incomingCount(nodes: RFNode[], edges: RFEdge[]) {
+  const map = new Map<string, number>();
+  nodes.forEach(n => map.set(n.id, 0));
+  edges.forEach(e => map.set(e.target, (map.get(e.target) ?? 0) + 1));
+  return map;
+}
+
+function findStartNodeId(nodes: RFNode[], edges: RFEdge[]): string | undefined {
+  const inc = incomingCount(nodes, edges);
+  const start = nodes.find(n => (inc.get(n.id) ?? 0) === 0);
+  return start?.id ?? nodes[0]?.id;
+}
+
+function getEdgesFrom(section: any): RFEdge[] {
+  // prefer top-level edges if present, otherwise gather from nodes.data.edges
+  if (Array.isArray(section?.questionnaire?.edges) && section.questionnaire.edges.length) {
+    return section.questionnaire.edges as RFEdge[];
+  }
+  const edges: RFEdge[] = [];
+  for (const n of section?.questionnaire?.nodes || []) {
+    for (const e of n?.data?.edges || []) edges.push(e);
+  }
+  return edges;
+}
+
+function optionIndexForAnswer(node: RFNode, answerText: string): number {
+  const opts = node?.data?.options || [];
+  const a = norm(answerText);
+  return opts.findIndex(o => norm(o) === a);
+}
+
+function hasReferralStop(node: RFNode, optIdx: number): boolean {
+  const od = node?.data?.optionsData || [];
+  const sel = od[optIdx];
+  return !!sel?.referralText && norm(sel.referralText).includes("refer");
+}
+
+function findNextEdge(edges: RFEdge[], nodeId: string, optIdx: number): RFEdge | undefined {
+  const handle = `option-${optIdx}`;
+  // match either data.sourceHandle or sourceHandle fields
+  return edges.find(
+    e =>
+      e.source === nodeId &&
+      (e?.data?.sourceHandle === handle || e?.sourceHandle === handle)
+  );
+}
+
+/**
+ * Compute the set of visible question node IDs based on the section graph and current answers.
+ * Stops if: no answer for current node, no edge for chosen option, or referral stop.
+ * Special case: if Q1 answer is "In policy alone", only "1" is visible.
+ */
+function computeVisibleIds(section: any): Set<string> {
+  const nodes: RFNode[] = section?.questionnaire?.nodes || [];
+  const edges: RFEdge[] = getEdgesFrom(section);
+  const byId = new Map(nodes.map((n: RFNode) => [n.id, n]));
+  const answers: { questionId: string; answer: any }[] = section?.answers || [];
+
+  // Special rule requested
+  const hasPolicyAlone = answers.some(
+    a => a.questionId === "1" && norm(a.answer) === "in policy alone"
+  );
+  if (hasPolicyAlone) return new Set(["1"]);
+
+  const startId = findStartNodeId(nodes, edges);
+  if (!startId) return new Set();
+
+  const vis = new Set<string>();
+  const visited = new Set<string>();
+  let currentId: string | undefined = startId;
+
+  while (currentId && !visited.has(currentId)) {
+    visited.add(currentId);
+    vis.add(currentId);
+
+    const node = byId.get(currentId);
+    if (!node) break;
+
+    const ans = answers.find(a => a.questionId === currentId);
+    if (!ans || ans.answer == null || (Array.isArray(ans.answer) && ans.answer.length === 0) || (typeof ans.answer === "string" && ans.answer.trim() === "")) {
+      // not answered yet: stop traversal here
+      break;
+    }
+
+    // radio/select single-answer expected
+    const idx = optionIndexForAnswer(node, String(ans.answer));
+    if (idx < 0) break; // chosen answer not found in options: stop
+
+    if (hasReferralStop(node, idx)) break; // referral ends path
+
+    const e = findNextEdge(edges, currentId, idx);
+    if (!e?.target) break;
+
+    currentId = e.target;
+  }
+
+  return vis;
+}
+
+
+  const fetchAssessmentData = useCallback(() => {
+    (async () => {
+      try {
+        console.log('Starting fetchAssessmentData for assessmentId:', assessmentId);
+        setLoading(true);
+        const { data, error } = await getAssessment();
+        
+        console.log('Assessment query result:', { data, error });
+        
+        if (error) {
+          return;
+        }
+        if (data?.getAssessment?.status === 'success' && data.getAssessment.assessment) {
+          const assessment = data.getAssessment.assessment;
+          console.log('Assessment data received:', assessment);
+          console.log('Assessment sections:', assessment.sections[0].questionnaire);
+          console.log('Assessment sections type:', typeof assessment.sections);
+          console.log('Assessment sections is array:', Array.isArray(assessment.sections));
+          console.log('Assessment overallProgress:', assessment.overallProgress);
+
+          setAssessmentData(assessment);
+
+          // Extract overallProgress from API response
+          if (assessment.overallProgress && assessment.overallProgress.overallProgress !== undefined) {
+            setOverallProgressPercentage(assessment.overallProgress.overallProgress);
+          }
+          
+          // Transform API data to match UI structure
+          const transformedSections = (assessment.sections || [])
+  .filter(section => section.questionnaire?.nodes && section.questionnaire.nodes.length > 0)
+  .map(section => {
+    // 1) Figure out which nodes are actually visible given current answers
+    const visibleIds = computeVisibleIds(section);
+
+    // 2) Build answers for only visible questions
+    const allAnswers = transformQuestionnaireToAnswers(section.questionnaire.nodes, section.answers || []);
+    const answers = allAnswers.filter(a => visibleIds.has(a.questionId));
+
+    // 3) Completion status based on visible questions only
+    const answeredQuestions = answers.filter(answer =>
+      answer.answer &&
+      !(Array.isArray(answer.answer) && answer.answer.length === 0) &&
+      !(typeof answer.answer === 'string' && answer.answer.trim() === '')
+    ).length;
+
+    const totalQuestions = answers.length;
+    const isCompleted = totalQuestions > 0 && answeredQuestions === totalQuestions;
+
+    return {
+      id: section.sectionId || `section-${section.sectionIndex || 0}`,
+      name: section.sectionName || `Section ${(section.sectionIndex || 0) + 1}`,
+      isCompleted,
+      answers,
+      answeredCount: answeredQuestions,
+      totalCount: totalQuestions
+    };
+  })
+  .filter(section => section.answers.length > 0); // Only include sections with questions
+          
+          console.log('Transformed sections:', transformedSections);
+          setSections(transformedSections);
+          
+        // Don't expand any section by default
+        setExpandedSection('');
+        } 
+       
+      } catch {
+      } finally {
+        console.log('Setting loading to false');
+        setLoading(false);
+      }
+    })();
+  }, [assessmentId, getAssessment, transformQuestionnaireToAnswers]);
+
+  const getDefaultAnswer = (questionType: string, options: string[]): string | string[] => {
+    switch (questionType) {
+      case 'radio':
+        return options.length > 0 ? options[0] : '';
+      case 'checkbox':
+        return [];
+      case 'text-input':
+      case 'text':
+      case 'textarea':
+        return '';
+      case 'number':
+        return '0';
+      default:
+        return '';
+    }
+  };
+
+  const handleSectionToggle = (sectionId: string) => {
+    setExpandedSection(expandedSection === sectionId ? '' : sectionId);
+  };
+
+  const handleResumeAssessment = () => {
+    if (assessmentId) {
+      // Check if we have assessment data with progress information
+      if (assessmentData?.sections) {
+        console.log('🔍 Resume Assessment: Checking for blocked sections');
+        
+        // Look for the first blocked section
+        for (let i = 0; i < assessmentData.sections.length; i++) {
+          const section = assessmentData.sections[i];
+          const progress = section.progress;
+          
+          console.log(`🔍 Section ${i} (${section.sectionName}):`, {
+            status: progress?.status,
+            nextQuestionId: progress?.nextQuestionId,
+            currentQuestionIndex: progress?.currentQuestionIndex
+          });
+          
+          // Check if section is blocked and has nextQuestionId as "blocked"
+          if (progress?.status === 'blocked' && progress?.nextQuestionId === 'blocked') {
+            console.log(`🚫 Section ${i} is blocked with nextQuestionId="blocked"`);
+            
+            // Find the actual blocked question by looking at the answers
+            // We need to find which question led to the referral (blocked state)
+            let blockedQuestionIndex = 0;
+            
+            // Get the answers for this section
+            const sectionAnswers = section.answers || [];
+            
+            // Look for the last answered question that might have led to referral
+            if (sectionAnswers.length > 0) {
+              // Use the last answered question as the blocked question
+              // This is because the block occurs after answering a question
+              blockedQuestionIndex = sectionAnswers.length - 1;
+              console.log(`🔍 Using last answered question as blocked: index ${blockedQuestionIndex} (question ${sectionAnswers[blockedQuestionIndex]?.questionId}) - answer: "${sectionAnswers[blockedQuestionIndex]?.answer}"`);
+            } else {
+              // Fallback: use the last question in the section
+              blockedQuestionIndex = 0;
+              console.log(`🔍 No answered questions found, using first question as blocked: index ${blockedQuestionIndex}`);
+            }
+            
+            console.log(`🚫 Navigating to blocked Section ${i}, Question ${blockedQuestionIndex + 1}`);
+            
+            // Navigate to the specific blocked question
+            router.push(`/assessment/new?id=${assessmentId}&resumeFromStart=false&sectionIndex=${i}&questionIndex=${blockedQuestionIndex}`);
+            return;
+          }
+        }
+        
+        // If no blocked section found, use normal resume behavior
+        console.log('🔍 No blocked sections found, using normal resume behavior');
+        router.push(`/assessment/new?id=${assessmentId}&resumeFromStart=true`);
+      } else {
+        // Fallback if no assessment data available
+        console.log('🔍 No assessment data available, using fallback resume');
+        router.push(`/assessment/new?id=${assessmentId}&resumeFromStart=true`);
+      }
+    } else {
+      router.push('/assessment/new');
+    }
+  };
+
+  const handleSubmitAssessment = async () => {
+    if (!assessmentId) {
+      return;
+    }
+
+    // Get userId and facilityId from assessment data or store
+    const currentUserId = userId || assessmentData?.userId || '';
+    const currentFacilityId = facilityId || assessmentData?.facilityId || '';
+
+    console.log('🔍 Assessment data sources:', {
+      assessmentId,
+      userId: currentUserId,
+      facilityId: currentFacilityId,
+      fromStore: { userId, facilityId },
+      fromAssessmentData: { userId: assessmentData?.userId, facilityId: assessmentData?.facilityId }
+    });
+
+    try {
+      console.log('🔄 Submitting assessment...');
+
+      // Create questionnaire sections for each section (same as new page structure)
+      const questionnaireSections = sections.map((section, sectionIndex) => {
+        // Get answers for this specific section
+        const sectionAnswers = section.answers.map(answer => {
+          // Extract original question ID from prefixed ID
+          // template-0-1 -> 1, template-1-2 -> 2, etc.
+          const originalQuestionId = answer.questionId.replace(/^template-\d+-/, '');
+
+          console.log(`🔄 Review Question ID transformation: ${answer.questionId} -> ${originalQuestionId}`);
+
+          return {
+            questionId: originalQuestionId,
+            answer: Array.isArray(answer.answer) ? answer.answer.join(', ') : (answer.answer || ''),
+            answeredAt: new Date().toISOString()
+          };
+        });
+
+        // Check if any question in this section had a referral end action triggered
+        const referralFlags = JSON.parse(localStorage.getItem('assessmentReferralFlags') || '{}');
+        const sectionHasReferral = section.answers.some(answer => {
+          const flagKey = answer.questionId;
+          return referralFlags[flagKey] && referralFlags[flagKey].hasReferral;
+        });
+
+        // Determine section status based on requirements:
+        // - "blocked" if any question has referral (refer to consultant)
+        // - "completed" if all questions answered and no referrals
+        // - "inProgress" for other cases
+        let sectionStatus: 'inProgress' | 'blocked' | 'completed';
+
+        if (sectionHasReferral) {
+          sectionStatus = 'blocked';
+        } else if (sectionAnswers.length === (section.totalCount || sectionAnswers.length)) {
+          // All questions answered and no referrals
+          sectionStatus = 'completed';
+        } else {
+          // Some questions not answered
+          sectionStatus = 'inProgress';
+        }
+
+        // Get sectionVersionId from assessmentData if available
+        const currentSectionVersionId = assessmentData?.sections?.[sectionIndex]?.sectionId ||
+                                       sectionVersionId ||
+                                       '68b18619e0337e146a5230bf';
+
+        return {
+          sectionVersionId: currentSectionVersionId,
+          answers: sectionAnswers,
+          progress: {
+            currentQuestionIndex: sectionAnswers.length > 0 ? sectionAnswers.length - 1 : 0,
+            totalQuestionsInSection: section.totalCount || sectionAnswers.length,
+            answeredQuestionsInSection: sectionAnswers.length,
+            status: sectionStatus
+          },
+          //  status: sectionStatus // Add status at root level as required by QuestionnaireSection interface
+        };
+      });
+
+      // Calculate overall progress and status
+      const allAnswers = questionnaireSections.flatMap(section => section.answers);
+      const totalQuestions = allAnswers.length;
+      const answeredQuestions = allAnswers.filter(answer => answer.answer).length;
+      const overallProgress = totalQuestions > 0 ? Math.min(Math.round((answeredQuestions / totalQuestions) * 100), 100) : 100;
+
+      // In review page: When handleSubmitAssessment is called, always set status to "completed"
+      // because the button is only enabled when it's safe to complete the assessment
+      const overallStatus = 'completed' as const;
+
+      console.log(`📊 Review page submit: Setting overall status to "completed"`);
+      console.log(`📊 Section statuses:`, questionnaireSections.map(s => s.progress.status));
+
+      // Create overall progress with status inside (same structure as new page)
+      const overallProgressData = {
+        currentSectionIndex: sections.length - 1,
+        totalSections: sections.length,
+        overallProgress,
+        totalQuestions,
+        answeredQuestions,
+        status: overallStatus
+      };
+
+      const updateInput: UpdateAssessmentInput = {
+        questionnaire: questionnaireSections,
+        overallProgress: overallProgressData
+      };
+
+      console.log('📊 Submit input:', updateInput);
+
+      const result = await updateAssessment({
+        variables: {
+          assessmentId,
+          input: updateInput
+        }
+      });
+
+      console.log('✅ Assessment submitted successfully:', result.data);
+      
+      if (result.data?.updateAssessment.status === 'success') {
+        // Navigate to assessment list
+        router.push('/assessment');
+      }
+
+    } catch {
+    }
+  };
+
+  const getCompletionPercentage = () => {
+    if (!assessmentData) return 0;
+    
+    // Calculate completion percentage based on answered questions vs total questions
+    const totalQuestions = assessmentData.overallProgress.totalQuestions || 0;
+    const answeredQuestions = assessmentData.overallProgress.answeredQuestions || 0;
+    
+    if (totalQuestions === 0) return 0;
+    
+    // Ensure progress never exceeds 100%
+    const percentage = Math.round((answeredQuestions / totalQuestions) * 100);
+    const finalPercentage = Math.min(percentage, 100);
+    return finalPercentage;
+  };
+
+  // Function to get referral text for a selected radio button option
+  const getReferralTextForAnswer = (answer: Answer): string | null => {
+    if (!answer.answer || answer.questionType !== 'radio') return null;
+    
+    // Find the matching option in optionsData
+    if (answer.options && Array.isArray(answer.options)) {
+      const selectedOption = answer.answer;
+      const optionIndex = answer.options.findIndex(option => option === selectedOption);
+      
+      if (optionIndex !== -1 && assessmentData) {
+        // Find the question node in assessment data
+        for (const section of assessmentData.sections) {
+          if (section.questionnaire?.nodes) {
+            const questionNode = section.questionnaire.nodes.find(node => 
+              node.id === answer.questionId || 
+              node.id === answer.questionId.replace(/^template-\d+-/, '')
+            );
+            
+            if (questionNode?.data?.optionsData && questionNode.data.optionsData[optionIndex]) {
+              const referralText = questionNode.data.optionsData[optionIndex].referralText;
+              if (referralText && referralText.trim() !== '') {
+                return referralText;
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    return null;
+  };
+
+  // Function to determine assessment status
+  const determineAssessmentStatus = (): 'completed' | 'inProgress' | 'blocked' => {
+    // Check if any question had a referral end action triggered
+    const referralFlags = JSON.parse(localStorage.getItem('assessmentReferralFlags') || '{}');
+    const hasReferral = Object.keys(referralFlags).some(questionId => 
+      referralFlags[questionId] && referralFlags[questionId].hasReferral
+    );
+    
+    if (hasReferral) {
+      return 'blocked';
+    }
+    
+    // Check if all questions are answered
+    const totalQuestions = sections.reduce((total, section) => total + (section.totalCount || 0), 0);
+    const answeredQuestions = sections.reduce((total, section) => total + (section.answeredCount || 0), 0);
+    
+    if (totalQuestions === 0) {
+      return 'inProgress';
+    }
+    
+    const completionPercentage = (answeredQuestions / totalQuestions) * 100;
+    
+    if (completionPercentage === 100) {
+      return 'completed';
+    }
+    
+    return 'inProgress';
+  };
+
+  // Helper function to check if a section has referrals
+  const sectionHasReferral = (section: Section): boolean => {
+    // First check localStorage for referral flags
+    const referralFlags = JSON.parse(localStorage.getItem('assessmentReferralFlags') || '{}');
+    const hasLocalReferral = section.answers.some(answer => {
+      const flagKey = answer.questionId;
+      return referralFlags[flagKey] && referralFlags[flagKey].hasReferral;
+    });
+
+    // Also check if the section status from API is "blocked"
+    // Check both assessmentData.questionnaire and assessmentData.sections
+    let hasApiBlockedStatus = false;
+
+    // Check questionnaire array (from your API response structure)
+    if (assessmentData && (assessmentData as any).questionnaire) {
+      hasApiBlockedStatus = (assessmentData as any).questionnaire.some((apiSection: any) => {
+        // Match section by checking if any answers match
+        const sectionMatches = apiSection.answers?.some((apiAnswer: any) =>
+          section.answers.some(sectionAnswer => sectionAnswer.questionId === apiAnswer.questionId)
+        );
+        return sectionMatches && apiSection.progress?.status === 'blocked';
+      });
+    }
+
+    // Also check sections array (alternative structure)
+    if (!hasApiBlockedStatus && assessmentData?.sections) {
+      hasApiBlockedStatus = assessmentData.sections.some(apiSection => {
+        const sectionMatches = apiSection.answers?.some(apiAnswer =>
+          section.answers.some(sectionAnswer => sectionAnswer.questionId === apiAnswer.questionId)
+        );
+        return sectionMatches && (apiSection as any).progress?.status === 'blocked';
+      });
+    }
+
+    // Debug logging for this section
+    console.log(`🔍 Section "${section.name}" referral check:`, {
+      hasLocalReferral,
+      hasApiBlockedStatus,
+      sectionAnswers: section.answers.map(a => ({ id: a.questionId, answer: a.answer })),
+      referralFlags: Object.keys(referralFlags).length > 0 ? referralFlags : 'empty'
+    });
+
+    return hasLocalReferral || hasApiBlockedStatus;
+  };
+
+  // Helper function to get section status and styling based on API data
+  const getSectionStatus = (section: Section) => {
+    console.log(`🎨 getSectionStatus called for: "${section.name}"`);
+
+    // Get API section status directly from assessmentData
+    let apiSectionStatus: string | null = null;
+
+    if (assessmentData?.sections) {
+      console.log(`📊 Available API sections:`, assessmentData.sections.map(s => ({
+        name: s.sectionName,
+        status: (s.progress as any)?.status
+      })));
+
+      const apiSection = assessmentData.sections.find((apiSection: any) => {
+        return apiSection.sectionName === section.name;
+      });
+
+      if (apiSection?.progress && (apiSection.progress as any).status) {
+        apiSectionStatus = (apiSection.progress as any).status;
+        console.log(`✅ Found API status for "${section.name}": ${apiSectionStatus}`);
+      } else {
+        console.log(`❌ No API status found for "${section.name}"`);
+      }
+    } else {
+      console.log(`❌ No assessmentData.sections available`);
+    }
+
+    // Use API status directly - this is the key change
+    const finalStatus = apiSectionStatus || 'inProgress';
+    console.log(`🎯 Final status for "${section.name}": ${finalStatus}`);
+
+    // Return colors based on API status
+    if (finalStatus === 'completed') {
+      console.log(`🟢 Returning GREEN colors for "${section.name}"`);
+      return {
+        status: 'completed',
+        backgroundColor: '#f6fbf6', // Light green background
+        expandedBackgroundColor: '#e4f3e6', // Darker green when expanded
+        hoverBackgroundColor: '#e4f3e6', // Green hover
+        iconColor: '#4cb054', // Green icon
+        textColor: '#4cb054', // Green text
+        subTextColor: '#4cb054' // Green sub text
+      };
+    } else if (finalStatus === 'blocked') {
+      console.log(`🟡 Returning YELLOW colors for "${section.name}"`);
+      return {
+        status: 'blocked',
+        backgroundColor: '#fefbf2', // Light yellow background
+        expandedBackgroundColor: '#f9ecb6', // Darker yellow when expanded
+        hoverBackgroundColor: '#f9ecb6', // Yellow hover
+        iconColor: '#e6ae06', // Orange icon
+        textColor: '#e6ae06', // Orange text
+        subTextColor: '#d97706' // Darker orange for sub text
+      };
+    } else {
+      console.log(`  Returning IN_PROGRESS colors for "${section.name}"`);
+      return {
+        status: 'inProgress',
+        backgroundColor: '#fefbf2', // Light yellow background
+        expandedBackgroundColor: '#fefbf2', // Same when expanded
+        hoverBackgroundColor: '#fef3c7', // Yellow hover
+        iconColor: '#e9b825', // Yellow icon
+        textColor: '#e9b825', // Yellow text
+        subTextColor: '#92400e' // Brown sub text
+      };
+    }
+  };
+
+  // Get button state and message based on referral/blockage status only
+  const getButtonStateAndMessage = () => {
+    // Check if there are any referrals (blockages) from localStorage
+    const referralFlags = JSON.parse(localStorage.getItem('assessmentReferralFlags') || '{}');
+    const hasLocalReferral = Object.keys(referralFlags).some(questionId =>
+      referralFlags[questionId] && referralFlags[questionId].hasReferral
+    );
+
+    // Also check if any section has blocked status from API
+    let hasApiBlockedStatus = false;
+    if (assessmentData && (assessmentData as any).questionnaire) {
+      hasApiBlockedStatus = (assessmentData as any).questionnaire.some((apiSection: any) =>
+        apiSection.progress?.status === 'blocked'
+      );
+    }
+
+    // Also check sections array for blocked status
+    if (!hasApiBlockedStatus && assessmentData?.sections) {
+      hasApiBlockedStatus = assessmentData.sections.some(section =>
+        (section as any).progress?.status === 'blocked'
+      );
+    }
+
+    // Check if any section in our current sections state has referrals
+    let hasSectionReferral = false;
+    if (sections && sections.length > 0) {
+      hasSectionReferral = sections.some(section => sectionHasReferral(section));
+    }
+
+    // Additional check: Look for referral text directly in the page content
+    // This is a fallback method to detect "Refer to Consultant" messages
+    let hasVisibleReferral = false;
+    if (sections && sections.length > 0) {
+      hasVisibleReferral = sections.some(section => {
+        return section.answers.some(answer => {
+          const referralText = getReferralTextForAnswer(answer);
+          return referralText && referralText.toLowerCase().includes('refer');
+        });
+      });
+    }
+
+    const hasReferral = hasLocalReferral || hasApiBlockedStatus || hasSectionReferral || hasVisibleReferral;
+
+    // Debug logging
+    console.log('🔍 Button State Debug:', {
+      hasLocalReferral,
+      hasApiBlockedStatus,
+      hasSectionReferral,
+      hasVisibleReferral,
+      hasReferral,
+      referralFlags,
+      assessmentDataStructure: assessmentData ? Object.keys(assessmentData) : 'null',
+      sectionsCount: sections?.length || 0
+    });
+
+    // Additional debug: Log the final result
+    console.log('🔘 Final Button State:', {
+      willShowMessage: hasReferral,
+      expectedMessage: hasReferral ? 'You have blockage' : 'No message'
+    });
+
+    // Enable button only if no blockages exist
+    if (!hasReferral) {
+      return {
+        isDisabled: false,
+        buttonColor: '#3b82f6',
+        hoverColor: '#2563eb',
+        message: null
+      };
+    }
+
+    // Show blockage message if referral exists
+    return {
+      isDisabled: true,
+      buttonColor: '#9ca3af',
+      hoverColor: '#9ca3af',
+      // message: 'You have blockage'
+    };
+  };
+
+  // Update assessment status when sections change
+  useEffect(() => {
+    if (sections.length > 0) {
+      const status = determineAssessmentStatus();
+      setAssessmentStatus(status);
+    }
+  }, [sections]);
+
+  // useEffect to fetch assessment data when component mounts
+  useEffect(() => {
+    console.log('useEffect triggered, assessmentId:', assessmentId);
+    console.log('searchParams:', searchParams);
+    
+    if (assessmentId && assessmentId.trim() !== '') {
+      console.log('Fetching assessment data for ID:', assessmentId);
+      fetchAssessmentData();
+    } else if (assessmentId === null) {
+      // Still waiting for searchParams to be available
+      console.log('Still waiting for searchParams to be available');
+      return;
+    } else {
+      // No assessment ID provided in URL
+      setTimeout(() => {
+        router.push('/assessment');
+      }, 2000);
+    }
+  }, [assessmentId, searchParams, fetchAssessmentData, router]);
+
+  // Add timeout to prevent infinite loading
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (loading) {
+        setLoading(false);
+      }
+    }, 10000); // 10 second timeout
+
+    return () => clearTimeout(timeout);
+  }, [loading]);
+
+  const renderAnswer = (answer: Answer) => {
+    // Check if question is unanswered
+    const isUnanswered = !answer.answer ||
+      (Array.isArray(answer.answer) && answer.answer.length === 0) ||
+      (typeof answer.answer === 'string' && answer.answer.trim() === '');
+
+    switch (answer.questionType) {
+      case 'radio':
+        const referralText = getReferralTextForAnswer(answer);
+        return (
+          <Box>
+            <FormControl component="fieldset" disabled>
+              <RadioGroup value={isUnanswered ? '' : answer.answer}>
+                {(answer.options || []).map((option, index) => (
+                  <FormControlLabel
+                    key={index}
+                    value={option}
+                    control={<Radio size="small" sx={{
+                      '&.Mui-checked': {
+                        color: '#3b82f6',
+                      },
+                      '&:hover': {
+                        backgroundColor: 'rgba(59, 130, 246, 0.04)',
+                      },
+                      cursor: 'not-allowed' // Add not-allowed cursor for disabled radio
+                    }} />}
+                    label={option || 'Unknown option'}
+                    sx={{
+                      cursor: 'not-allowed', // Add not-allowed cursor for disabled form control
+                      '& .MuiFormControlLabel-label': {
+                        fontSize: '14px',
+                        color: '#111827'
+                      },
+                      '& .MuiFormControlLabel-label.Mui-disabled': {
+                        color: 'black'
+                      }
+                    }}
+                  />
+                ))}
+              </RadioGroup>
+            </FormControl>
+            {referralText && (
+              <Alert
+                severity="info"
+                icon={<InfoIcon />}
+                sx={{
+                  mt: 2,
+                  '& .MuiAlert-message': {
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    fontFamily: 'var(--font-inter), sans-serif'
+                  }
+                }}
+              >
+                {referralText}
+              </Alert>
+            )}
+          </Box>
+        );
+      case 'checkbox':
+        return (
+          <Box>
+            {isUnanswered ? (
+              // Show all options unchecked for unanswered questions
+              (answer.options || []).map((option, index) => (
+                <FormControlLabel
+                  key={index}
+                  control={<Checkbox checked={false} disabled size="small" sx={{ cursor: 'not-allowed' }} />}
+                  label={option || 'Unknown option'}
+                  sx={{
+                    display: 'block',
+                    cursor: 'not-allowed', // Add not-allowed cursor for disabled checkbox
+                    '& .MuiFormControlLabel-label': {
+                      fontSize: '14px',
+                      color: '#374151'
+                    }
+                  }}
+                />
+              ))
+            ) : (
+              // Show selected answers for answered questions
+              Array.isArray(answer.answer) ? (answer.answer || []).map((item, index) => (
+                <FormControlLabel
+                  key={index}
+                  control={<Checkbox checked={!!item} disabled size="small" />}
+                  label={item || 'Unknown option'}
+                  sx={{
+                    display: 'block',
+                    '& .MuiFormControlLabel-label': {
+                      fontSize: '14px',
+                      color: '#374151'
+                    }
+                  }}
+                />
+              )) : (
+                <FormControlLabel
+                  control={<Checkbox checked={!!answer.answer} disabled size="small" />}
+                  label={answer.answer || 'No answer'}
+                  sx={{
+                    '& .MuiFormControlLabel-label': {
+                      fontSize: '14px',
+                      color: '#374151'
+                    }
+                  }}
+                />
+              )
+            )}
+          </Box>
+        );
+      case 'text-input':
+      case 'text':
+        return (
+          <TextField
+            value={answer.answer || ''}
+            placeholder={isUnanswered ? 'No answer provided' : ''}
+            disabled
+            multiline
+            fullWidth
+            variant="outlined"
+            size="small"
+            sx={{
+              cursor: 'not-allowed', // Add not-allowed cursor for disabled text field
+              '& .MuiOutlinedInput-root': {
+                backgroundColor: isUnanswered ? '#fefbf2' : '#f9fafb',
+                fontSize: '14px',
+                cursor: 'not-allowed' // Also apply to input root
+              },
+              '& .MuiInputBase-input.Mui-disabled': {
+                cursor: 'not-allowed' // Apply to input itself
+              }
+            }}
+          />
+        );
+      case 'textarea':
+        return (
+          <TextField
+            value={answer.answer || ''}
+            placeholder={isUnanswered ? 'No answer provided' : ''}
+            disabled
+            multiline
+            rows={4}
+            fullWidth
+            variant="outlined"
+            size="small"
+            sx={{
+              '& .MuiOutlinedInput-root': {
+                backgroundColor: isUnanswered ? '#fef3c7' : '#f9fafb',
+                fontSize: '14px'
+              }
+            }}
+          />
+        );
+      case 'number':
+        return (
+          <TextField
+            value={isUnanswered ? '' : (answer.answer || 0)}
+            placeholder={isUnanswered ? 'No answer provided' : ''}
+            disabled
+            type="number"
+            fullWidth
+            variant="outlined"
+            size="small"
+            sx={{
+              '& .MuiOutlinedInput-root': {
+                backgroundColor: isUnanswered ? '#fef3c7' : '#f9fafb',
+                fontSize: '14px'
+              }
+            }}
+          />
+        );
+      default:
+        return (
+          <Typography sx={{
+            fontSize: '14px',
+            color: isUnanswered ? '#92400e' : '#374151',
+            fontStyle: 'italic',
+            backgroundColor: isUnanswered ? '#fef3c7' : 'transparent',
+            padding: isUnanswered ? '8px' : '0',
+            borderRadius: isUnanswered ? '4px' : '0'
+          }}>
+            {answer.answer || 'No answer provided'}
+          </Typography>
+        );
+    }
+  };
+
+  // Show loading while waiting for search params or during data fetch
+  if (assessmentId === null || loading || queryLoading) {
+    return (
+      <DashboardLayout>
+        <Box sx={{ 
+          height: "100%", 
+          backgroundColor: "#f8fafc", 
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center"
+        }}>
+          <CircularProgress />
+        </Box>
+      </DashboardLayout>
+    );
+  }
+
+  if (!assessmentData) {
+    return (
+      <DashboardLayout>
+        <Box sx={{ 
+          height: "100%", 
+          backgroundColor: "#f8fafc", 
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          gap: 2
+        }}>
+          <Typography variant="h6" color="#6b7280">No assessment data found</Typography>
+
+        </Box>
+      </DashboardLayout>
+    );
+  }
+
+  return (
+    <DashboardLayout>
+      <Box sx={{ 
+        height: "100%", 
+        backgroundColor: "#f8fafc", 
+        overflow: "auto",
+        '&::-webkit-scrollbar': {
+          width: '8px',
+        },
+        '&::-webkit-scrollbar-track': {
+          background: '#f1f1f1',
+          borderRadius: '4px',
+        },
+        '&::-webkit-scrollbar-thumb': {
+          background: '#3b82f6',
+          borderRadius: '4px',
+          '&:hover': {
+            background: '#2563eb',
+          },
+        },
+      }}>
+        {/* Sticky Header */}
+        <Box sx={{ backgroundColor: "transparent", position: "sticky", top: 0, zIndex: 10 }}>
+          <Box sx={{ px: 0, pt: 0, pb: 1, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <Box>
+              <Typography variant="h5" fontWeight={600} fontFamily={"var(--font-inter), sans-serif"} sx={{ color: "#111827" }}>
+                Assessment 
+              </Typography>
+              <Typography variant="subtitle1" color="#6c757d" fontFamily={"var(--font-inter), sans-serif"}>
+                {user?.facilityName || 'Medical Facility'} - Started On {new Date().toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric'
+                })}
+              </Typography>
+            </Box>
+            {/* <Chip
+              label={`In Progress - ${overallProgressPercentage || Math.min(getCompletionPercentage(), 100)}%`}
+              sx={{
+                backgroundColor: "#faf5e3",
+                color: "#eabf3f",
+                fontWeight: 700,
+                borderRadius: "8px",
+                px: 1.5,
+                height: 32,
+              }}
+            /> */}
+             <Chip
+              label={overallProgressPercentage === 100 ? `Completed - ${overallProgressPercentage}%` : `In Progress - ${overallProgressPercentage}%`}
+              sx={{
+                backgroundColor: overallProgressPercentage === 100 ? "#e8f5e8" : "#faf5e3",
+                color: overallProgressPercentage === 100 ? "#2e7d32" : "#e9b825",
+                fontWeight: 700,
+                borderRadius: "8px",
+                px: 1.5,
+                height: 32,
+              }}
+            /> 
+          </Box>
+        </Box>
+
+
+        {/* Main Content Card - Fixed Height */}
+        <Box
+          sx={{
+            borderColor: "#e5e7eb",
+            borderRadius: 2,
+            boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+            mt: 2,
+            display: "flex",
+            flexDirection: "column",
+            backgroundColor: "#fff",
+            border: "1px solid #e5e7eb",
+            height: "calc(100vh - 200px)", // Fixed height - adjust as needed
+            minHeight: "600px", // Minimum height
+            maxHeight: "800px" // Maximum height
+          }}
+        >
+          {/* Scrollable Content Area */}
+          <Box sx={{ 
+            flex: 1,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column"
+          }}>
+            {/* Sections Container - Scrollable */}
+            <Box sx={{ 
+              flex: 1,
+              overflowY: "auto",
+              p: 2.5,
+              pt: 3,
+              '&::-webkit-scrollbar': {
+                width: '8px',
+              },
+              '&::-webkit-scrollbar-track': {
+                background: '#f1f1f1',
+                borderRadius: '4px',
+              },
+              '&::-webkit-scrollbar-thumb': {
+                background: '#3b82f6',
+                borderRadius: '4px',
+                '&:hover': {
+                  background: '#2563eb',
+                },
+              },
+              // Firefox scrollbar styling
+              scrollbarWidth: 'thin',
+              scrollbarColor: '#3b82f6 #f1f1f1',
+            }}>
+              {sections.length > 0 ? sections.map((section) => {
+                const sectionStatus = getSectionStatus(section);
+                const hasReferral = sectionHasReferral(section);
+
+                return (
+                  <Accordion
+                    key={section.id}
+                    expanded={expandedSection === section.id}
+                    onChange={() => handleSectionToggle(section.id)}
+                    sx={{
+                      mb: 2,
+                      borderRadius: '8px !important',
+                      border: '1px solid #e5e7eb',
+                      boxShadow: 'none',
+                      transition: 'all 0.3s ease-in-out', // Smooth expansion animation
+                      '&:before': {
+                        display: 'none'
+                      },
+                      '&.Mui-expanded': {
+                        margin: '0 0 16px 0',
+                        '& .MuiAccordionDetails-root': {
+                          minHeight: '200px', // Ensure expanded content has minimum height
+                        }
+                      }
+                    }}
+                  >
+                    <AccordionSummary
+                      expandIcon={<ExpandMoreIcon sx={{
+                        color: sectionStatus.iconColor,
+                        fontSize: '24px'
+                      }} />}
+                      sx={{
+                        backgroundColor: sectionStatus.backgroundColor,
+                        borderRadius: '8px',
+                        minHeight: '56px',
+                        cursor: section.isCompleted ? 'pointer' : 'not-allowed',
+                        transition: 'all 0.3s ease-in-out', // Smooth transition
+                        '&.Mui-expanded': {
+                          borderBottomLeftRadius: 0,
+                          borderBottomRightRadius: 0,
+                          minHeight: '56px',
+                          backgroundColor: sectionStatus.expandedBackgroundColor,
+                          boxShadow: '0 2px 8px rgba(0,0,0,0.1)', // Add shadow when expanded
+                          transform: 'translateY(-1px)', // Slight lift effect
+                        },
+                        '& .MuiAccordionSummary-content': {
+                          alignItems: 'center',
+                          margin: '12px 0',
+                          transition: 'all 0.3s ease-in-out'
+                        },
+                        '& .MuiAccordionSummary-content.Mui-expanded': {
+                          margin: '12px 0'
+                        },
+                        '&:hover': {
+                          backgroundColor: sectionStatus.hoverBackgroundColor,
+                          cursor: section.isCompleted ? 'pointer' : 'not-allowed',
+                          transform: 'translateY(-1px)', // Hover lift effect
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        }
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                          {sectionStatus.status === 'completed' ? (
+                            <DoneIcon sx={{ color: sectionStatus.iconColor, fontSize: '24px' }} />
+                          ) : sectionStatus.status === 'inProgress' ? (
+                            <HourglassBottomIcon sx={{ color: sectionStatus.iconColor, fontSize: '24px' }} />
+                          ) : (
+                            <HourglassBottomIcon sx={{ color: sectionStatus.iconColor, fontSize: '24px' }} />
+                          )}
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                            <Typography sx={{
+                              fontWeight: 600,
+                              fontSize: '16px',
+                              color: sectionStatus.textColor,
+                              fontFamily: 'var(--font-inter), sans-serif'
+                            }}>
+                              {section.name}
+                            </Typography>
+                            {/* <Typography sx={{
+                              fontSize: '12px',
+                              color: sectionStatus.subTextColor,
+                              fontFamily: 'var(--font-inter), sans-serif'
+                            }}>
+                              {section.answeredCount || 0} of {section.totalCount || 0} questions answered
+                            </Typography> */}
+                          </Box>
+                        </Box>
+                      </Box>
+                    </AccordionSummary>
+                    <AccordionDetails sx={{
+                      p: 3,
+                      backgroundColor: '#f6fbf6',
+                      minHeight: '200px', // Minimum height when expanded
+                      maxHeight: '400px', // Increased max height for better content visibility
+                      overflowY: 'auto',
+                      transition: 'all 0.3s ease-in-out', // Smooth height transition
+                      '&::-webkit-scrollbar': {
+                        width: '6px',
+                      },
+                      '&::-webkit-scrollbar-track': {
+                        backgroundColor: '#f1f5f9',
+                        borderRadius: '3px',
+                      },
+                      '&::-webkit-scrollbar-thumb': {
+                        backgroundColor: '#3b82f6',
+                        borderRadius: '3px',
+                        '&:hover': {
+                          backgroundColor: '#2563eb',
+                        },
+                      },
+                      // Firefox scrollbar styling
+                      scrollbarWidth: 'thin',
+                      scrollbarColor: '#3b82f6 #f1f5f9',
+                    }}>
+                      {section.answers.length > 0 ? (
+                        <Box>
+                          {section.answers.map((answer, answerIndex) => (
+                            <Box key={answer.questionId} sx={{ mb: 4 }}>
+                              <Typography sx={{
+                                fontSize: "18px",
+                                fontWeight: 600,
+                                mb: 3,
+                                color: "#1f2937",
+                                lineHeight: 1.5,
+                                fontFamily: 'var(--font-inter), sans-serif'
+                              }}>
+                                {answerIndex + 1}. {answer.questionText || 'Question text not available'}
+                                {answer.isRequired && (
+                                  <span style={{ color: '#ef4444' }}> *</span>
+                                )}
+                              </Typography>
+                              <Box sx={{ ml: 2 }}>
+                                {renderAnswer(answer)}
+                              </Box>
+                            </Box>
+                          ))}
+                        </Box>
+                      ) : (
+                        <Typography sx={{ 
+                          color: '#6b7280', 
+                          fontStyle: 'italic',
+                          fontFamily: 'var(--font-inter), sans-serif'
+                        }}>
+                          No questions answered in this section yet.
+                        </Typography>
+                      )}
+                    </AccordionDetails>
+                  </Accordion>
+                );
+              }) : (
+                <Box sx={{
+                  textAlign: 'center',
+                  py: 8,
+                  px: 4
+                }}>
+                  <Typography sx={{
+                    color: '#6b7280',
+                    fontStyle: 'italic',
+                    fontFamily: 'var(--font-inter), sans-serif',
+                    fontSize: '18px',
+                    mb: 2
+                  }}>
+                    No assessment sections found
+                  </Typography>
+                  <Typography sx={{
+                    color: '#9ca3af',
+                    fontFamily: 'var(--font-inter), sans-serif',
+                    fontSize: '14px',
+                    mb: 3
+                  }}>
+                    Please complete the assessment first or check if the assessment ID is correct.
+                  </Typography>
+                  <Button
+                    variant="outlined"
+                    onClick={() => router.push('/assessment')}
+                    sx={{
+                      borderColor: '#3b82f6',
+                      color: '#3b82f6',
+                      '&:hover': {
+                        borderColor: '#2563eb',
+                        backgroundColor: '#eff6ff'
+                      }
+                    }}
+                  >
+                    Go to Assessment
+                  </Button>
+                </Box>
+              )}
+            </Box>
+          </Box>
+
+          {/* Footer - Fixed at bottom of card */}
+          <Box sx={{
+            flexShrink: 0, // Prevent footer from shrinking
+            borderTop: '1px solid #e5e7eb',
+            backgroundColor: '#fff'
+          }}>
+            {/* Back Button - Only shown in view mode */}
+            {mode === 'view' && (
+              <Box sx={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                alignItems: 'center',
+                p: 2.5
+              }}>
+                <Button
+                  onClick={() => router.push('/assessment')}
+                  variant="outlined"
+                  startIcon={<ArrowBackIcon />}
+                  sx={{
+                    textTransform: 'none',
+                    fontWeight: 600,
+                    borderRadius: '8px',
+                    px: 3,
+                    py: 1.5,
+                    borderColor: '#3b82f6',
+                    color: '#3b82f6',
+                    fontFamily: 'var(--font-inter), sans-serif',
+                    '&:hover': {
+                      borderColor: '#2563eb',
+                      backgroundColor: 'rgba(59, 130, 246, 0.04)'
+                    }
+                  }}
+                >
+                  Back
+                </Button>
+              </Box>
+            )}
+
+            {/* Action Buttons - Hidden in view mode */}
+            {mode !== 'view' && (
+              <Box sx={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                p: 2.5
+              }}>
+                <Button
+                  onClick={handleResumeAssessment}
+                  variant="outlined"
+                  startIcon={<ArrowBackIcon />}
+                  sx={{
+                    textTransform: 'none',
+                    fontWeight: 600,
+                    borderRadius: '8px',
+                    px: 3,
+                    py: 1.5,
+                    borderColor: '#3b82f6',
+                    color: '#3b82f6',
+                    fontFamily: 'var(--font-inter), sans-serif',
+                    '&:hover': {
+                      borderColor: '#2563eb',
+                      backgroundColor: 'rgba(59, 130, 246, 0.04)'
+                    }
+                  }}
+                >
+                  Resume Assessment
+                </Button>
+
+                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                  {(() => {
+                    const buttonState = getButtonStateAndMessage();
+                    return (
+                      <>
+                        {buttonState.message && (
+                          <Typography sx={{
+                            color: '#ef4444',
+                            fontSize: '12px',
+                            fontWeight: 500,
+                            mb: 1,
+                            fontFamily: 'var(--font-inter), sans-serif'
+                          }}>
+                            {buttonState.message}
+                          </Typography>
+                        )}
+                        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                          <Button
+                            onClick={() => router.push('/assessment')}
+                            variant="contained"
+                            startIcon={<SaveIcon />}
+                            sx={{
+                              textTransform: 'none',
+                              fontWeight: 600,
+                              borderRadius: '8px',
+                              px: 3,
+                              py: 1.5,
+                              backgroundColor: '#4f8ff7',
+                              color: '#ffffff',
+                              fontFamily: 'var(--font-inter), sans-serif',
+                              '&:hover': {
+                                backgroundColor: '#3b7dd8'
+                              }
+                            }}
+                          >
+                            Save Draft
+                          </Button>
+                          <Button
+                            onClick={handleSubmitAssessment}
+                            variant="contained"
+                            disabled={buttonState.isDisabled}
+                            endIcon={<DoneAllIcon />}
+                            sx={{
+                              textTransform: 'none',
+                              fontWeight: 600,
+                              borderRadius: '8px',
+                              px: 3,
+                              py: 1.5,
+                              backgroundColor: buttonState.buttonColor,
+                              fontFamily: 'var(--font-inter), sans-serif',
+                              '&:hover': {
+                                backgroundColor: buttonState.hoverColor
+                              },
+                              '&:disabled': {
+                                backgroundColor: '#9ca3af',
+                                color: '#ffffff'
+                              }
+                            }}
+                          >
+                            Complete Assessment
+                          </Button>
+                        </Box>
+                      </>
+                    );
+                  })()}
+                </Box>
+              </Box>
+            )}
+          </Box>
+        </Box>
+      </Box>
+    </DashboardLayout>
+  );
+};
+
+export default AssessmentReview;  

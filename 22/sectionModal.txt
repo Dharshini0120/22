@@ -1,0 +1,318 @@
+import React, { useState } from 'react';
+import {
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
+    Button,
+    Box,
+    Typography,
+    Radio,
+    RadioGroup,
+    FormControlLabel,
+    IconButton,
+    Chip,
+    CircularProgress
+} from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
+
+interface Section {
+    assessmentId: string;
+    sectionVersionId: string;
+    sectionName: string;
+    status: string;
+}
+
+interface SectionSelectionModalProps {
+    open: boolean;
+    onClose: () => void;
+    onProceed: (selectedSection: Section) => void;
+    sections: Section[];
+    isLoading?: boolean;
+}
+
+const SectionSelectionModal: React.FC<SectionSelectionModalProps> = ({
+    open,
+    onClose,
+    onProceed,
+    sections,
+    isLoading = false
+}) => {
+    const [selectedSection, setSelectedSection] = useState<Section | null>(null);
+
+    const handleSectionChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const sectionId = event.target.value;
+        const section = sections.find(s => s.sectionVersionId === sectionId);
+        setSelectedSection(section || null);
+    };
+
+    const handleProceed = () => {
+        if (selectedSection) {
+            onProceed(selectedSection);
+        }
+    };
+
+    const getButtonText = () => {
+        if (!selectedSection) return 'Start Assessment';
+        
+        const normalizedStatus = selectedSection.status.toLowerCase();
+        if (normalizedStatus === 'inprogress' || normalizedStatus === 'in progress') {
+            return 'Continue';
+        }
+        return 'Start Assessment';
+    };
+
+    const getStatusColor = (status: string) => {
+        switch (status.toLowerCase()) {
+            case 'inprogress':
+            case 'in progress':
+                return '#fff3cd'; // Light yellow background
+            case 'completed':
+                return '#d1fae5'; // Light green background
+            default:
+                return '#f3f4f6'; // Light gray background
+        }
+    };
+
+    const getStatusTextColor = (status: string) => {
+        switch (status.toLowerCase()) {
+            case 'inprogress':
+            case 'in progress':
+                return '#d8a714'; // Dark yellow/orange text
+            case 'completed':
+                return '#059669'; // Dark green text
+            default:
+                return '#6b7280'; // Gray text
+        }
+    };
+
+    const getStatusText = (status: string) => {
+        switch (status.toLowerCase()) {
+            case 'inprogress':
+            case 'in progress':
+                return 'In Progress';
+            case 'completed':
+                return 'Completed';
+            default:
+                return status;
+        }
+    };
+
+    const shouldShowStatus = (status: string) => {
+        const normalizedStatus = status.toLowerCase();
+        return normalizedStatus === 'inprogress' || normalizedStatus === 'in progress';
+    };
+
+    return (
+        <Dialog
+            open={open}
+            onClose={onClose}
+            maxWidth="sm"
+            fullWidth
+            PaperProps={{
+                sx: {
+                    borderRadius: '12px',
+                    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+                    overflow: 'hidden'
+                }
+            }}
+        >
+            {/* Header */}
+            <DialogTitle
+                sx={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    px: 3,
+                    py: 2.5,
+                    backgroundColor: '#f8fafc',
+                    borderBottom: '1px solid #e2e8f0'
+                }}
+            >
+                <Typography
+                    component="span"
+                    sx={{
+                        fontWeight: 600,
+                        color: '#1e293b',
+                        fontSize: '18px'
+                    }}
+                >
+                    Select Assessment
+                </Typography>
+                <IconButton
+                    onClick={onClose}
+                    sx={{
+                        color: '#64748b',
+                        '&:hover': {
+                            backgroundColor: '#f1f5f9',
+                            color: '#475569'
+                        }
+                    }}
+                >
+                    <CloseIcon />
+                </IconButton>
+            </DialogTitle>
+
+            {/* Content */}
+            <DialogContent sx={{ p: 0 }}>
+                <Box sx={{ p: 3 }}>
+                    {isLoading ? (
+                        <Box 
+                            sx={{ 
+                                display: 'flex', 
+                                flexDirection: 'column',
+                                alignItems: 'center', 
+                                justifyContent: 'center',
+                                py: 4,
+                                gap: 2
+                            }}
+                        >
+                            <CircularProgress 
+                                size={40} 
+                                sx={{ 
+                                    color: '#408bff',
+                                    '& .MuiCircularProgress-circle': {
+                                        strokeLinecap: 'round',
+                                    }
+                                }} 
+                            />
+                            {/* <Typography 
+                                variant="body1" 
+                                sx={{ 
+                                    color: '#6b7280',
+                                    fontWeight: 500
+                                }}
+                            >
+                                Loading sections...
+                            </Typography> */}
+                        </Box>
+                    ) : (
+                        <RadioGroup
+                            value={selectedSection?.sectionVersionId || ''}
+                            onChange={handleSectionChange}
+                            sx={{ gap: 2 }}
+                        >
+                            {sections.map((section) => (
+                                <Box
+                                    key={section.sectionVersionId}
+                                    sx={{
+                                        border: '1px solid #e2e8f0',
+                                        borderRadius: '8px',
+                                        p: 2.5,
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s ease-in-out',
+                                        backgroundColor: selectedSection?.sectionVersionId === section.sectionVersionId 
+                                            ? '#f0f9ff' 
+                                            : '#ffffff',
+                                        borderColor: selectedSection?.sectionVersionId === section.sectionVersionId 
+                                            ? '#0ea5e9' 
+                                            : '#e2e8f0',
+                                        '&:hover': {
+                                            backgroundColor: selectedSection?.sectionVersionId === section.sectionVersionId 
+                                                ? '#f0f9ff' 
+                                                : '#f8fafc',
+                                            borderColor: selectedSection?.sectionVersionId === section.sectionVersionId 
+                                                ? '#0ea5e9' 
+                                                : '#cbd5e1'
+                                        }
+                                    }}
+                                >
+                                    <FormControlLabel
+                                        value={section.sectionVersionId}
+                                        control={
+                                            <Radio
+                                                sx={{
+                                                    color: '#0ea5e9',
+                                                    '&.Mui-checked': {
+                                                        color: '#0ea5e9'
+                                                    }
+                                                }}
+                                            />
+                                        }
+                                        label={
+                                            <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                                                 <Typography
+                                                     sx={{
+                                                         fontWeight: 500,
+                                                         color: '#1e293b',
+                                                         fontSize: '16px',
+                                                         flex: 1
+                                                     }}
+                                                 >
+                                                     {section.sectionName}
+                                                 </Typography>
+                                                 {shouldShowStatus(section.status) && (
+                                                     <Chip
+                                                         label={getStatusText(section.status)}
+                                                         size="small"
+                                                         sx={{
+                                                             backgroundColor: getStatusColor(section.status),
+                                                             color: getStatusTextColor(section.status),
+                                                             fontWeight: 600,
+                                                             fontSize: '12px',
+                                                             height: '24px',
+                                                             mr: 1,
+                                                             border: 'none',
+                                                             borderRadius: '0px !important',
+                                                             '& .MuiChip-label': {
+                                                                 color: getStatusTextColor(section.status),
+                                                                 fontWeight: 500
+                                                             }
+                                                         }}
+                                                     />
+                                                 )}                                           
+                                            </Box>
+                                        }
+                                        sx={{
+                                            margin: 0,
+                                            width: '100%',
+                                            '& .MuiFormControlLabel-label': {
+                                                width: '100%'
+                                            }
+                                        }}
+                                    />
+                                </Box>
+                            ))}
+                        </RadioGroup>
+                    )}
+                </Box>
+            </DialogContent>
+
+            {/* Footer */}
+            <DialogActions
+                sx={{
+                    px: 3,
+                    py: 2.5,
+                    backgroundColor: '#f8fafc',
+                    borderTop: '1px solid #e2e8f0'
+                }}
+            >
+                <Button
+                    onClick={handleProceed}
+                    disabled={!selectedSection || isLoading}
+                    variant="contained"
+                    sx={{
+                        background: selectedSection && !isLoading ? 'linear-gradient(90deg, #3a7de6 0%, #3670cc 100%)' : '#94a3b8',
+                        color: 'white',
+                        px: 4,
+                        py: 1,
+                        textTransform: 'none',
+                        fontWeight: 500,
+                        fontSize: '14px',
+                        '&:hover': {
+                            background: selectedSection && !isLoading ? 'linear-gradient(90deg, #3a7de6 0%, #3670cc 100%)' : '#94a3b8'
+                        },
+                        '&:disabled': {
+                            backgroundColor: '#94a3b8',
+                            color: 'white'
+                        }
+                    }}
+                >
+                    {isLoading ? 'Loading...' : getButtonText()}
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+};
+
+export default SectionSelectionModal;

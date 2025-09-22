@@ -12,7 +12,7 @@ import { useRouter } from 'next/navigation';
 import { useLazyQuery, useQuery } from '@apollo/client';
 import { toast } from 'react-toastify';
 import DashboardLayout from '../../components/layout/DashboardLayout';
-import { setTemplatesData, clearTemplatesData } from '../../utils/templatesStore';
+import { setTemplatesData } from '../../utils/templatesStore';
 import { withPageLoader, CustomPagination } from "@frontend/shared-ui";
 import { 
   LIST_USER_ASSESSMENTS_QUERY,
@@ -246,23 +246,15 @@ const Assessment = () => {
         return;
       }
 
-      // Prepare data for the assessment page - match the structure used by edit flow
-      const templatesData = {
-        scenarioVersions: [],
+      // Prepare data for the assessment page
+      const assessmentData = {
         assessment: assessment,
-        isEditing: true,
+        selectedSection: selectedSectionData,
+        sectionVersionId: selectedSection.sectionVersionId,
         assessmentId: selectedSection.assessmentId
       };
       
-      setTemplatesData(templatesData);  
-      console.log('🔄 Popup navigation - setting templatesData and navigating:', templatesData);
-      
-      // Clear any existing templates data to ensure fresh state
-      clearTemplatesData();
-      
-      // Set the new data
-      setTemplatesData(templatesData);
-      
+      setTemplatesData(assessmentData);  
       router.push('/assessment/new');
     } catch (error) {
       console.error('Error in handleSectionProceed:', error);

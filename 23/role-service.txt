@@ -1,0 +1,84 @@
+import { gql } from '@apollo/client';
+
+export const GET_ALL_ROLES = gql`
+  query ListAllRoles {
+    listAllRoles {
+      status
+      message
+      statusCode
+      data
+      error
+    }
+  }
+ `;
+
+export const CREATE_ROLE_MUTATION = gql`
+  mutation CreateRole($input: CreateRoleInput!) {
+    createRole(input: $input) {
+      status
+      message
+      statusCode
+      data
+      error
+    }
+  }
+`;
+
+export const UPDATE_ROLE_MUTATION = gql`
+  mutation UpdateRole($input: UpdateRoleInput!) {
+    updateRole(input: $input) {
+      status
+      message
+      statusCode
+      data
+      error
+    }
+  }
+`;
+
+export const DELETE_ROLE_MUTATION = gql`
+  mutation DeleteRole($roleId: String!) {
+    deleteRole(roleId: $roleId) {
+      status
+      message
+      statusCode
+      data
+      error
+    }
+  }
+`;
+
+export const GET_ROLE_BY_ID = gql`
+  query GetRoleById($roleId: String!) {
+    getRoleById(roleId: $roleId) {
+      status
+      message
+      statusCode
+      data
+    }
+  }
+`;
+
+export const GET_ROLE = gql`
+  query GetRole($identifier: String!) {
+    getRole(identifier: $identifier) {
+      status
+      message
+      statusCode
+      data
+      error
+    }
+  }
+`;
+
+export const UPDATE_ROLE_AND_PERMISSIONS_MUTATION = gql`
+  mutation UpdateRoleAndPermissions($input: UpdateRolePermissionsInput!) {
+    updateRoleAndPermissions(input: $input) {
+      statusCode
+      message
+      data
+      error
+    }
+  }
+`;
+

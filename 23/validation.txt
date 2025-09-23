@@ -1,0 +1,187 @@
+/**
+ * Validation utility functions for email and mobile number
+ */
+
+export interface ValidationResult {
+  isValid: boolean;
+  error: string;
+}
+
+/**
+ * Validates email format
+ */
+export const validateEmail = (email: string): ValidationResult => {
+  if (!email) {
+    return { isValid: false, error: "Email is required" };
+  }
+  
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return { isValid: false, error: "Please enter a valid email address" };
+  }
+  
+  return { isValid: true, error: "" };
+};
+
+/**
+ * Validates mobile number format
+ * Supports US and Indian mobile number formats
+ */
+export const validateMobileNumber = (mobileNumber: string): ValidationResult => {
+  if (!mobileNumber) {
+    return { isValid: false, error: "Mobile number is required" };
+  }
+
+  // Trim whitespace
+  const trimmedNumber = mobileNumber.trim();
+  
+  // Check if it's empty after trimming
+  if (!trimmedNumber) {
+    return { isValid: false, error: "Please enter a valid mobile number" };
+  }
+
+  // Use the provided regex pattern for US and Indian mobile numbers
+  // const mobileRegex = /^(?:(?:\+91[ -]?)?[6-9]\d{9}|(?:\+1[ -]?)?(?:\(?[2-9]\d{2}\)?[ -.]?[2-9]\d{2}[ -.]?\d{4}))$/;
+   const mobileRegex = /^(?:(?:\+91[ -]?)?[6-9]\d{9}|(?:\+1[ -]?)?(?:\([2-9]\d{2}\)|[2-9]\d{2})[ .-]?[2-9]\d{2}[ .-]?\d{4})$/;
+
+  
+  // Test against the regex pattern
+  const isValidFormat = mobileRegex.test(trimmedNumber);
+  
+  if (!isValidFormat) {
+    return { isValid: false, error: "Please enter a valid mobile number" };
+  }
+
+  return { isValid: true, error: "" };
+};
+
+/**
+ * Determines if input is email or mobile number
+ */
+export const getInputType = (input: string): 'email' | 'mobile' | 'unknown' => {
+  if (!input) return 'unknown';
+  
+  // Check if it contains @ symbol (likely email)
+  if (input.includes('@')) {
+    return 'email';
+  }
+  
+  // Check if it matches the mobile number pattern (US or Indian)
+  const mobileRegex = /^(?:(?:\+91[ -]?)?[6-9]\d{9}|(?:\+1[ -]?)?(?:\(?[2-9]\d{2}\)?[ -.]?[2-9]\d{2}[ -.]?\d{4}))$/;
+  if (mobileRegex.test(input.trim())) {
+    return 'mobile';
+  }
+  
+  // Check if it contains only digits, spaces, dashes, dots, parentheses, and + (likely mobile)
+  const mobilePattern = /^[\d\s\-\.\(\)\+]+$/;
+  if (mobilePattern.test(input)) {
+    return 'mobile';
+  }
+  
+  return 'unknown';
+};
+
+/**
+ * Validates email or mobile number based on input type
+ */
+export const validateEmailOrMobile = (input: string): ValidationResult => {
+  // Check if input is empty first
+  if (!input || input.trim() === '') {
+    return { isValid: false, error: "Email address or mobile number is required" };
+  }
+  
+  const inputType = getInputType(input);
+  
+  switch (inputType) {
+    case 'email':
+      return validateEmail(input);
+    case 'mobile':
+      return validateMobileNumber(input);
+    default:
+      return { isValid: false, error: "Please enter a valid email address or mobile number" };
+  }
+};
+
+/**
+ * Formats mobile number for display
+ */
+export const formatMobileNumber = (mobileNumber: string): string => {
+  const cleanNumber = mobileNumber.replace(/\D/g, '');
+  
+  if (cleanNumber.length === 10) {
+    // US format: (123) 456-7890
+    return `(${cleanNumber.slice(0, 3)}) ${cleanNumber.slice(3, 6)}-${cleanNumber.slice(6)}`;
+  } else if (cleanNumber.length === 11 && cleanNumber.startsWith('1')) {
+    // US format with country code: +1 (123) 456-7890
+    return `+1 (${cleanNumber.slice(1, 4)}) ${cleanNumber.slice(4, 7)}-${cleanNumber.slice(7)}`;
+  }
+  
+  // International format: +1234567890
+  return `+${cleanNumber}`;
+};
+
+/**
+ * Handles keydown event to restrict special characters
+ */
+export const handleInputKeyDown = (e: React.KeyboardEvent<HTMLDivElement>, inputType: 'email' | 'mobile' | 'unknown'): void => {
+  // Characters to restrict
+  const restrictedChars = ['"', "'", '=',';', ':', ']', '[', '{', '}', '\\', '|', '*', '^', '!', '#', ',', '?', '~', '`'];
+  
+  // Allow special characters for email (like @ and .)
+  if (inputType === 'email') {
+    const emailAllowedChars = ['@', '.', '-', '_'];
+    const restrictedForEmail = restrictedChars.filter(char => !emailAllowedChars.includes(char));
+    
+    if (restrictedForEmail.includes(e.key)) {
+      e.preventDefault();
+    }
+  } 
+  // For mobile numbers, restrict most special characters except basic formatting
+  else if (inputType === 'mobile') {
+    const mobileAllowedChars = ['+', '(', ')', '-', '.', ' '];
+    const restrictedForMobile = restrictedChars.concat(['@', '_']);
+    
+    if (restrictedForMobile.includes(e.key)) {
+      e.preventDefault();
+    }
+  }
+  // For unknown type, restrict all special characters
+  else {
+    if (restrictedChars.includes(e.key)) {
+      e.preventDefault();
+    }
+  }
+};
+
+/**
+ * Normalizes mobile number for API calls
+ */
+export const normalizeMobileNumber = (mobileNumber: string): string => {
+  const trimmedNumber = mobileNumber.trim();
+  
+  // If it already starts with +, return as is
+  if (trimmedNumber.startsWith('+')) {
+    return trimmedNumber;
+  }
+  
+  // Remove all non-digit characters
+  const cleanNumber = trimmedNumber.replace(/\D/g, '');
+  
+  // For Indian numbers (10 digits starting with 6-9)
+  if (cleanNumber.length === 10 && /^[6-9]/.test(cleanNumber)) {
+    return `+91${cleanNumber}`;
+  }
+  
+  // For US numbers (10 digits)
+  if (cleanNumber.length === 10) {
+    return `+1${cleanNumber}`;
+  }
+  
+  // For US numbers with country code (11 digits starting with 1)
+  if (cleanNumber.length === 11 && cleanNumber.startsWith('1')) {
+    return `+${cleanNumber}`;
+  }
+  
+  // For other cases, add + if not present
+  return `+${cleanNumber}`;
+};

@@ -1,0 +1,2712 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+"use client";
+
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  Box,
+  Typography,
+  Button,
+  Card,
+  CardContent,
+  LinearProgress,
+  Alert,
+  Chip,
+  Tabs,
+  Tab,
+  Divider,
+} from "@mui/material";
+import DoneIcon from '@mui/icons-material/Done';
+import HourglassBottomIcon from '@mui/icons-material/HourglassBottom';
+import ArrowBackIosNewIcon from "@mui/icons-material/ArrowBackIosNew";
+import ArrowForwardIosIcon from "@mui/icons-material/ArrowForwardIos";
+import VisibilityIcon from "@mui/icons-material/Visibility";
+import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
+import DashboardLayout from "../../../components/layout/DashboardLayout";
+import QuestionInput from "../../../components/questionnaire/QuestionInput";
+// import QuestionStepper from "../../../components/assessment/QuestionStepper";
+import { getTemplatesData, clearTemplatesData, setTemplatesData } from '../../../utils/templatesStore';
+import { useMutation, useLazyQuery } from '@apollo/client';
+import { UPDATE_ASSESSMENT_MUTATION, UpdateAssessmentData, UpdateAssessmentInput, GET_ASSESSMENT_QUERY } from '../../../graphql/templates.service';
+import { useSelector } from 'react-redux';
+import { RootState } from '../../../store/store';
+
+interface Template {
+  id: string;
+  name: string;
+  description: string;
+  nodes: any[];
+  edges: any[];
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const AssessmentPage = () => {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const assessmentId = searchParams.get('id');
+  const resumeFromStart = searchParams.get('resumeFromStart') === 'true';
+  const sectionIndexParam = searchParams.get('sectionIndex');
+  const questionIndexParam = searchParams.get('questionIndex');
+  
+  console.log('🔍 Assessment Form - assessmentId from URL:', assessmentId);
+  console.log('🔍 Resume from start:', resumeFromStart);
+  console.log('🔍 Section index from URL:', sectionIndexParam);
+  console.log('🔍 Question index from URL:', questionIndexParam);
+  
+  const [template, setTemplate] = useState<Template | null>(null);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [answers, setAnswers] = useState<Record<string, any>>({});
+  const [isUserSet, setIsUserSet] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [mounted, setMounted] = useState(false);
+  const [currentSectionIndex, setCurrentSectionIndex] = useState(0);
+  const [currentQuestionInSection, setCurrentQuestionInSection] = useState(0);
+  
+  // Debug state changes
+  useEffect(() => {
+    console.log(`🔄 STATE CHANGE: currentSectionIndex changed to ${currentSectionIndex}`);
+  }, [currentSectionIndex]);
+  
+  useEffect(() => {
+    console.log(`🔄 STATE CHANGE: currentQuestionInSection changed to ${currentQuestionInSection}`);
+  }, [currentQuestionInSection]);
+  const [hasAutoNavigated, setHasAutoNavigated] = useState(false);
+  const [savedAnswers, setSavedAnswers] = useState<Record<string, any>>({});
+  const [realTimeSectionStatus, setRealTimeSectionStatus] = useState<Record<string, string>>({});
+  const autoNavigationAttempted = useRef(false);
+  const lastAutoNavigationTime = useRef(0);
+
+  const questionsTopRef = useRef<HTMLDivElement | null>(null);
+
+  // Get user information from Redux store
+  const { user } = useSelector((state: RootState) => state.auth);
+
+  // Get templates data from store
+  const [templatesData, setTemplatesDataState] = useState(getTemplatesData());
+  
+  // Debug store data
+  console.log('🔍 Store data:', { templatesData, type: typeof templatesData });
+
+  // Assessment data state
+  const [sectionVersionId, setSectionVersionId] = useState<string>('');
+
+  // Update assessment mutation
+  const [updateAssessment] = useMutation<UpdateAssessmentData>(UPDATE_ASSESSMENT_MUTATION);
+
+  // Get assessment query for editing mode
+  const [getAssessment, { loading: assessmentLoading, data: assessmentData }] = useLazyQuery(GET_ASSESSMENT_QUERY);
+  
+  // Check for templates data periodically
+  useEffect(() => {
+    const checkTemplatesData = () => {
+      const data = getTemplatesData();
+      
+      // Update state if we have data and either:
+      // 1. No templatesData yet (initial load)
+      // 2. TemplatesData exists but store has been updated (for fresh API responses)
+      if (data && (!templatesData || JSON.stringify(data) !== JSON.stringify(templatesData))) {
+        console.log('📊 Found templates data in store, updating state');
+        console.log('📊 Previous templatesData:', templatesData);
+        console.log('📊 New templatesData:', data);
+        
+        // Debug: Check if nextQuestionId has changed
+        if (templatesData?.assessment?.sections?.[0]?.progress?.nextQuestionId !== 
+            data?.assessment?.sections?.[0]?.progress?.nextQuestionId) {
+          console.log('🎯 nextQuestionId changed!');
+          console.log('🎯 Old nextQuestionId:', templatesData?.assessment?.sections?.[0]?.progress?.nextQuestionId);
+          console.log('🎯 New nextQuestionId:', data?.assessment?.sections?.[0]?.progress?.nextQuestionId);
+        }
+        
+        setTemplatesDataState(data);
+      }
+    };
+    
+    const interval = setInterval(checkTemplatesData, 100); // Check every 100ms
+    return () => clearInterval(interval);
+  }, [templatesData]);
+
+  // Process templates and create combined template structure
+  const processTemplates = useCallback(async (apiTemplates: any[]) => {
+    // Remove duplicates based on template name and only keep templates with questionnaires
+    const templatesWithQuestionnaires = apiTemplates.filter((template: any) => {
+      // Check if template has questionnaire with nodes
+      const hasQuestionnaire = template.questionnaire?.nodes &&
+                             Array.isArray(template.questionnaire.nodes) &&
+                             template.questionnaire.nodes.length > 0;
+
+      if (!hasQuestionnaire) {
+        console.log(` Skipping template "${template.name}" - no questionnaire data`);
+        return false;
+      }
+
+      return true;
+    });
+
+    // Use a Map to deduplicate by template name (case-insensitive)
+    // Also log template IDs to help debug duplicates
+    const uniqueTemplatesMap = new Map();
+    templatesWithQuestionnaires.forEach((template: any) => {
+      const normalizedName = template.name?.trim().toLowerCase();
+      if (normalizedName && !uniqueTemplatesMap.has(normalizedName)) {
+        console.log(`✅ Adding unique template: "${template.name}" (ID: ${template.id})`);
+        uniqueTemplatesMap.set(normalizedName, template);
+      } else {
+        console.log(`⚠️ Skipping duplicate template "${template.name}" (ID: ${template.id})`);
+      }
+    });
+
+    const uniqueTemplates = Array.from(uniqueTemplatesMap.values());
+
+    console.log(`🔄 Filtered to ${uniqueTemplates.length} unique templates with questionnaires`);
+
+    if (uniqueTemplates.length === 0) {
+      console.log('❌ No valid templates with questionnaires found');
+      alert("No valid templates found. Please try creating a new assessment from the main page.");
+      router.push("/assessment");
+      return;
+    }
+
+    // Convert unique API templates into a single template with multiple sections
+    const combinedTemplate: Template = {
+      id: 'combined-assessment',
+      name: 'Multi-Template Assessment',
+      description: `Assessment with ${uniqueTemplates.length} template(s)`,
+      nodes: [],
+      edges: [],
+      status: 'Completed',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    // Create sections for each unique template
+    uniqueTemplates.forEach((apiTemplate: any, index: number) => {
+      console.log(`🔄 Processing template ${index + 1}: "${apiTemplate.name}"`);
+      console.log(`🔄 Template questionnaire nodes count:`, apiTemplate.questionnaire?.nodes?.length || 0);
+
+      // Create a section node for this template
+      const sectionNode = {
+        id: `template-section-${index}`,
+        type: 'sectionNode',
+        position: { x: 0, y: index * 100 },
+        data: {
+          sectionName: apiTemplate.name, // "Ambulatory Surgical Center", "Outpatient Dialysis", etc.
+          sectionVersionId: apiTemplate.id || apiTemplate._id // Store the sectionVersionId from template
+        }
+      };
+
+      combinedTemplate.nodes.push(sectionNode);
+      // console.log(`✅ Created section node with ID: ${sectionNode.id} and name: "${sectionNode.data.sectionName}"`);
+
+      // Add all questions from this template's questionnaire
+      if (apiTemplate.questionnaire?.nodes) {
+        apiTemplate.questionnaire.nodes.forEach((node: any) => {
+          // Only add question nodes, skip other node types
+          if (node.type === 'questionNode') {
+            // Prefix node IDs to avoid conflicts between templates
+            const prefixedNode = {
+              ...node,
+              id: `template-${index}-${node.id}`,
+              //id: node.id,
+              data: {
+                ...node.data,
+                templateSection: `template-section-${index}` // Link to section
+              }
+            };
+            combinedTemplate.nodes.push(prefixedNode);
+          }
+        });
+      }
+
+      // Add edges from this template's questionnaire
+      if (apiTemplate.questionnaire?.edges) {
+        apiTemplate.questionnaire.edges.forEach((edge: any) => {
+          // Prefix edge IDs to avoid conflicts
+          const prefixedEdge = {
+            ...edge,
+            id: `template-${index}-${edge.id}`,
+            source: `template-${index}-${edge.source}`,
+            target: `template-${index}-${edge.target}`
+          };
+          combinedTemplate.edges.push(prefixedEdge);
+        });
+      }
+    });
+
+    console.log('🔄 Combined template:', combinedTemplate);
+    console.log('🔄 Number of sections:', uniqueTemplates.length);
+    console.log('🔄 Total nodes:', combinedTemplate.nodes.length);
+
+    setTemplate(combinedTemplate);
+    setLoading(false);
+  }, [router]);
+
+  // Load templates from context data when component mounts
+  useEffect(() => {
+    console.log('🔄 useEffect triggered:', { mounted, isUserSet, templatesData: !!templatesData, assessmentId });
+    if (!mounted || !isUserSet) return;
+
+    // If we have an assessmentId in URL but no templatesData, fetch the assessment
+    if (assessmentId && !templatesData && !assessmentLoading) {
+      console.log('🔄 Fetching assessment data for ID:', assessmentId);
+      getAssessment({ variables: { assessmentId } });
+      return;
+    }
+
+    // If we don't have templatesData and no assessmentId, redirect
+    if (!templatesData && !assessmentId) {
+      console.log('❌ No templates data or assessmentId available, redirecting to assessment page');
+      router.push("/assessment");
+      return;
+    }
+
+    // If we're still loading assessment data, wait
+    if (assessmentId && assessmentLoading) {
+      console.log('⏳ Loading assessment data...');
+      return;
+    }
+
+    const loadTemplateFromContextData = async () => {
+      try {
+        console.log('🔄 Loading template from context data...');
+        console.log('📊 Templates data received:', templatesData);
+
+        // Check if we're editing an existing assessment
+        if (templatesData.isEditing && templatesData.assessment) {
+          // Create a template from the existing assessment data
+          const assessmentData = templatesData.assessment;
+          
+          // Ensure assessmentData has the expected structure
+          if (!assessmentData.sections || !Array.isArray(assessmentData.sections)) {
+            alert("Invalid assessment data. Please try again.");
+            router.push("/assessment");
+            return;
+          }
+          
+          // Convert assessment sections to template format
+          const formattedTemplates = assessmentData.sections.map((section: any, index: number) => {            
+            return {
+              id: section.sectionId || `section-${index}`,
+              name: section.sectionName || `Section ${index + 1}`,
+              questionnaire: section.questionnaire || { nodes: [], edges: [] },
+              version: '1.0', // Default version for existing assessments
+              facilityandservicelines: [],
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              isExistingAssessment: true,
+              answers: section.answers || [],
+              progress: section.progress || {
+                currentQuestionIndex: 0,
+                totalQuestionsInSection: 0,
+                answeredQuestionsInSection: 0
+              }
+            };
+          });
+          // Process the templates (this will handle the existing assessment data)
+          await processTemplates(formattedTemplates);
+          
+          // Set the current section and question based on progress
+          if (resumeFromStart) {
+            // Force resume from first section, first question
+            console.log('🔄 Resume from start - forcing first section, first question');
+            setCurrentSectionIndex(0);
+            setCurrentQuestionInSection(0);
+          } else if (assessmentData.overallProgress) {
+            // Normal resume behavior - continue from where user left off
+            console.log('🔄 Normal resume - continuing from progress');
+            setCurrentSectionIndex(assessmentData.overallProgress.currentSectionIndex || 0);
+            setCurrentQuestionInSection(assessmentData.overallProgress.currentQuestionIndex || 0);
+          }
+          
+          // Load existing answers if available
+          if (assessmentData.sections) {
+            const existingAnswers: Record<string, any> = {};
+            assessmentData.sections.forEach((section: any, sectionIndex: number) => {
+              if (section.answers && Array.isArray(section.answers)) {
+                // Create a map to store the latest answer for each questionId (to handle duplicates)
+                const latestAnswers = new Map();
+
+                section.answers.forEach((answer: any) => {
+                  if (answer.questionId && (answer.answer !== undefined || answer.value !== undefined)) {
+                    // Use answer.answer first, fallback to answer.value for backward compatibility
+                    const answerValue = answer.answer !== undefined ? answer.answer : answer.value;
+                    // Use answeredAt timestamp
+                    const timestamp = answer.answeredAt || new Date().toISOString();
+
+                    // Store the latest answer for this questionId
+                    const existing = latestAnswers.get(answer.questionId);
+                    if (!existing || new Date(timestamp) > new Date(existing.timestamp)) {
+                      latestAnswers.set(answer.questionId, {
+                        value: answerValue,
+                        timestamp: timestamp
+                      });
+                    }
+                  }
+                });
+
+                // Convert to the internal format with template-based IDs
+                latestAnswers.forEach((answerData, questionId) => {
+                  // Create template-based question ID for internal use
+                  const templateQuestionId = `template-${sectionIndex}-${questionId}`;
+                  existingAnswers[templateQuestionId] = answerData.value;
+
+                  console.log(`🔄 Loaded answer: ${templateQuestionId} = "${answerData.value}"`);
+                });
+              }
+            });
+
+            console.log('🔄 All loaded answers:', existingAnswers);
+            console.log('🔄 Total answers loaded:', Object.keys(existingAnswers).length);
+            setAnswers(existingAnswers);
+            
+            // Initialize saved answers for API comparison
+            setSavedAnswers({ ...existingAnswers });
+          }
+          
+          return;
+        }
+
+        // Use the new assessment data structure
+        const assessment = templatesData.assessment;
+        const selectedSection = templatesData.selectedSection;
+        const sectionVersionId = templatesData.sectionVersionId;
+
+        console.log('📊 Assessment data:', assessment);
+        console.log('📊 Selected section:', selectedSection);
+        console.log('📊 Section version ID:', sectionVersionId);
+
+        if (!assessment || !selectedSection) {
+          console.log('❌ No assessment or selected section data found');
+          alert("No assessment data available. Please try again.");
+          router.push("/assessment");
+          return;
+        }
+
+        // Check if the selected section has questionnaire data
+        if (!selectedSection.questionnaire || 
+            !selectedSection.questionnaire.nodes || 
+            !Array.isArray(selectedSection.questionnaire.nodes) ||
+            selectedSection.questionnaire.nodes.length === 0) {
+          console.log('❌ No questionnaire data found for selected section');
+          alert("No questionnaire available for this section. Please contact your administrator.");
+          router.push("/assessment");
+          return;
+        }
+
+        // Convert the selected section to the format expected by the assessment page
+        const formattedTemplate = {
+          id: sectionVersionId,
+          name: selectedSection.sectionName,
+          questionnaire: selectedSection.questionnaire,
+          sectionIndex: selectedSection.sectionIndex,
+          progress: selectedSection.progress,
+          answers: selectedSection.answers || []
+        };
+
+        console.log('✅ Successfully loaded assessment data:', formattedTemplate);
+        console.log('🔄 Section name:', formattedTemplate.name);
+        console.log('🔄 Questionnaire nodes:', selectedSection.questionnaire.nodes.length);
+
+        // Set the section version ID
+        setSectionVersionId(sectionVersionId);
+
+        // If there's existing assessment data, load the progress and answers
+        if (assessment && selectedSection) {
+          console.log('📊 Loading existing assessment progress...');
+          
+          // Load existing answers from the assessment data
+          if (assessment.sections && Array.isArray(assessment.sections)) {
+            const existingAnswers: Record<string, any> = {};
+            assessment.sections.forEach((section: any, sectionIndex: number) => {
+              if (section.answers && Array.isArray(section.answers)) {
+                // Create a map to store the latest answer for each questionId (to handle duplicates)
+                const latestAnswers = new Map();
+
+                section.answers.forEach((answer: any) => {
+                  if (answer.questionId && (answer.answer !== undefined || answer.value !== undefined)) {
+                    // Use answer.answer first, fallback to answer.value for backward compatibility
+                    const answerValue = answer.answer !== undefined ? answer.answer : answer.value;
+                    // Use answeredAt timestamp
+                    const timestamp = answer.answeredAt || new Date().toISOString();
+
+                    // Store the latest answer for this questionId
+                    const existing = latestAnswers.get(answer.questionId);
+                    if (!existing || new Date(timestamp) > new Date(existing.timestamp)) {
+                      latestAnswers.set(answer.questionId, {
+                        value: answerValue,
+                        timestamp: timestamp
+                      });
+                    }
+                  }
+                });
+
+                // Convert to the internal format with template-based IDs
+                latestAnswers.forEach((answerData, questionId) => {
+                  // Create template-based question ID for internal use
+                  const templateQuestionId = `template-${sectionIndex}-${questionId}`;
+                  existingAnswers[templateQuestionId] = answerData.value;
+
+                  console.log(`🔄 Loaded answer: ${templateQuestionId} = "${answerData.value}"`);
+                });
+              }
+            });
+
+            console.log('🔄 All loaded answers:', existingAnswers);
+            console.log('🔄 Total answers loaded:', Object.keys(existingAnswers).length);
+            setAnswers(existingAnswers);
+            
+            // Initialize saved answers for API comparison
+            setSavedAnswers({ ...existingAnswers });
+          }
+        } else {
+          // Set default values for new assessment
+          // Assessment ID comes from URL parameter
+        }
+
+        // Process the single template
+        await processTemplates([formattedTemplate]);
+
+      } catch (e) {
+        console.error("❌ Error loading template from context data:", e);
+        alert("Failed to load template");
+        router.push("/dashboard");
+      }
+    };
+
+    loadTemplateFromContextData();
+  }, [templatesData, router, processTemplates, mounted, isUserSet, assessmentId, assessmentLoading, getAssessment]);
+
+  // Handle fetched assessment data
+  useEffect(() => {
+    if (assessmentData?.getAssessment?.status === 'success' && assessmentData.getAssessment.assessment) {
+      console.log('✅ Assessment data fetched successfully:', assessmentData.getAssessment.assessment);
+
+      // Create templatesData structure from fetched assessment
+      const fetchedAssessment = assessmentData.getAssessment.assessment;
+      const mockTemplatesData = {
+        isEditing: true,
+        assessment: fetchedAssessment,
+        templates: [] // We'll populate this from the assessment sections
+      };
+
+      console.log('🔄 Setting templatesData from fetched assessment:', mockTemplatesData);
+      setTemplatesDataState(mockTemplatesData);
+    }
+  }, [assessmentData]);
+
+  useEffect(() => {
+    setMounted(true);
+    setIsUserSet(true);
+  }, []);
+
+  // Fallback timeout to handle cases where templates data is not available
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (!templatesData && mounted && isUserSet) {
+        console.log('⏰ Timeout reached, no templates data available, redirecting to assessment page');
+        router.push("/assessment");
+      }
+    }, 10000); // 10 second timeout
+
+    return () => clearTimeout(timeout);
+  }, [templatesData, mounted, isUserSet, router]);
+
+  // Cleanup templates data when component unmounts
+  useEffect(() => {
+    return () => {
+      clearTemplatesData();
+    };
+  }, []);
+
+  // Helper function to get the flow path from a specific question with a given answer
+  const getFlowPathFromQuestion = (questionId: string, answer: any): number[] => {
+    if (!template?.edges || !questionId || !answer) return [];
+
+    const flowPath: number[] = [];
+    let currentQuestionId = questionId;
+    let currentAnswer = answer;
+
+    // Follow the flow for up to 10 steps to avoid infinite loops
+    for (let step = 0; step < 10; step++) {
+      // Find edges from current question
+      const outgoingEdges = template.edges.filter((e: any) => e.source === currentQuestionId);
+
+      if (outgoingEdges.length === 0) break;
+
+      // Find the edge that matches the current answer
+      const matchingEdge = outgoingEdges.find((e: any) => {
+        return checkEdgeCondition(e, currentAnswer);
+      });
+
+      if (!matchingEdge || !matchingEdge.target) break;
+
+      // Extract question number from target
+      const targetQuestionId = matchingEdge.target.replace(/^template-\d+-/, '');
+      const questionNumber = parseInt(targetQuestionId);
+
+      if (isNaN(questionNumber)) break;
+
+      flowPath.push(questionNumber);
+
+      // For next iteration, we need to check if we have an answer for this question
+      const nextQuestionAnswer = answers[targetQuestionId] || answers[questionNumber.toString()];
+      if (!nextQuestionAnswer) break;
+
+      currentQuestionId = matchingEdge.target;
+      currentAnswer = nextQuestionAnswer;
+    }
+
+    return flowPath;
+  };
+
+  // Helper function to clear answers after a specific question when flow changes
+  const clearAnswersAfterQuestion = (updatedQuestionId: string, newAnswer: any) => {
+    console.log(`🗑️ Clearing answers after question ${updatedQuestionId} due to flow change`);
+
+    // Start with current answers and update the changed question
+    const updatedAnswers = {
+      ...answers,
+      [updatedQuestionId]: newAnswer
+    };
+
+    // Get the expected next question for the new answer
+    const expectedNextQuestion = getExpectedNextQuestion(updatedQuestionId, newAnswer);
+    console.log(`🔍 Expected next question for ${updatedQuestionId} with answer "${newAnswer}": ${expectedNextQuestion}`);
+
+    // Get the current question number to use as slice point
+    const currentQuestionNumber = parseInt(updatedQuestionId.replace(/^template-\d+-/, ''));
+    console.log(`🔍 Current question number: ${currentQuestionNumber}`);
+    
+    if (!isNaN(currentQuestionNumber)) {
+      const clearedAnswers = { ...updatedAnswers };
+      
+      // Convert answers to array format for slicing
+      const answersArray = Object.entries(clearedAnswers)
+        .map(([questionId, answer]) => ({
+          questionId,
+          answer,
+          numericId: parseInt(questionId.replace(/^template-\d+-/, ''))
+        }))
+        .filter(item => !isNaN(item.numericId))
+        .sort((a, b) => a.numericId - b.numericId);
+      
+      console.log(`📊 All answers before slice:`, answersArray.map(a => `Q${a.numericId}: "${a.answer}"`));
+      
+      // Use slice to keep only answers up to current question number (inclusive)
+      // When Q4 changes, keep only Q1-Q4, remove Q5-Q6
+      const slicedAnswers = answersArray.slice(0, currentQuestionNumber);
+      
+      console.log(`✂️ Sliced answers (keep first ${currentQuestionNumber}):`, slicedAnswers.map(a => `Q${a.numericId}: "${a.answer}"`));
+      
+      // Convert back to object format
+      const result = {};
+      slicedAnswers.forEach(item => {
+        result[item.questionId] = item.answer;
+      });
+      
+      console.log(`✅ Cleared answers using slice. Before: ${Object.keys(updatedAnswers).length} answers, After: ${Object.keys(result).length} answers`);
+      return result;
+    }
+
+    // If current question number is invalid, return updated answers as is
+    console.log(`🚫 Current question number is invalid, returning updated answers as is`);
+    return updatedAnswers;
+  };
+
+  const handleAnswerChange = (questionId: string, answer: any) => {
+    console.log(`📝 Answer changed for ${questionId}:`, answer);
+
+    // Check if this is an update to a previously answered question
+    const previousAnswer = answers[questionId];
+    const isUpdate = previousAnswer !== undefined && previousAnswer !== null && previousAnswer !== '';
+    const isSameAnswer = previousAnswer === answer;
+
+    console.log(`🔍 Answer analysis:`, {
+      questionId,
+      previousAnswer,
+      newAnswer: answer,
+      isUpdate,
+      isSameAnswer
+    });
+
+    if (isUpdate && !isSameAnswer) {
+      console.log(`🔄 Updating previously answered question ${questionId}, checking if flow change is needed`);
+
+      // Check if the flow actually changes by comparing expected next questions
+      const previousAnswer = answers[questionId];
+      const previousNextQuestion = getExpectedNextQuestion(questionId, previousAnswer);
+      const newNextQuestion = getExpectedNextQuestion(questionId, answer);
+      
+      console.log(`🔍 Flow change analysis:`, {
+        questionId,
+        previousAnswer,
+        newAnswer: answer,
+        previousNextQuestion,
+        newNextQuestion,
+        flowChanged: previousNextQuestion !== newNextQuestion
+      });
+
+      // Only clear subsequent answers if the flow actually changes
+      if (previousNextQuestion !== newNextQuestion) {
+        console.log(`🔄 Flow changed! Clearing subsequent answers from question ${questionId}`);
+        console.log(`🔍 Before clearing - current answers:`, Object.keys(answers).length);
+        const clearedAnswers = clearAnswersAfterQuestion(questionId, answer);
+        setAnswers(clearedAnswers);
+        console.log(`🔍 After clearing - remaining answers:`, Object.keys(clearedAnswers).length);
+        console.log(`✅ Updated answers with cleared subsequent responses:`, clearedAnswers);
+      } else {
+        console.log(`✅ Flow unchanged, keeping all subsequent answers`);
+    setAnswers((prev) => ({ ...prev, [questionId]: answer }));
+      }
+    } else {
+      // New answer or same answer - just update normally
+      setAnswers((prev) => ({ ...prev, [questionId]: answer }));
+
+      if (isSameAnswer) {
+        console.log(`✅ Same answer selected for ${questionId}, no flow change needed`);
+      }
+    }
+
+    // Note: API call is now only made when user clicks "Next Question" button
+    // This prevents unnecessary API calls when just selecting options
+
+    setTimeout(() => {
+      const visible = getQuestionNodes();
+      if (currentQuestionIndex >= visible.length && visible.length > 0) {
+        setCurrentQuestionIndex(visible.length - 1);
+      }
+    }, 0);
+  };
+
+  // Function to update assessment
+  const handleUpdateAssessment = async (isCompleted: boolean = false) => {
+    // Get assessmentId from URL (for edit) or from store (for new)
+    const currentAssessmentId = assessmentId || templatesData?.assessment?.assessmentId;
+    
+    console.log('🔍 Assessment ID sources:', {
+      fromURL: assessmentId,
+      fromStore: templatesData?.assessment?.assessmentId,
+      currentAssessmentId,
+      templatesData: templatesData
+    });
+    
+    if (!currentAssessmentId) {
+      console.log('No assessmentId found - this is a new assessment, skipping update for now');
+      return;
+    }
+
+    try {
+      console.log('🔄 Updating assessment...');
+      
+      // Get current answers
+      const currentAnswers = Object.entries(answers).map(([questionId, answer]) => ({
+        questionId,
+        answer: answer || '',
+        answeredAt: new Date().toISOString()
+      }));
+
+       // Calculate progress using reachable questions based on current flow
+       const totalQuestions = getTotalQuestionsInAllSections(); // Use total questions in all sections
+
+      // Function to calculate nextQuestionId based on questionnaire flow
+      const calculateNextQuestionId = (sectionId: string, sectionAnswers: any[], hasReferral: boolean): string | number => {
+        console.log(`🔍 Calculating nextQuestionId for section ${sectionId} with ${sectionAnswers.length} answers`);
+
+        // If section has referral, it's blocked
+        if (hasReferral) {
+          return "blocked";
+        }
+
+        // If no answers yet, return 1 (first question)
+        if (sectionAnswers.length === 0) {
+          return 1;
+        }
+
+        // Get all questions for this section to check if all are answered
+        const totalQuestionsInSection = getTotalQuestionsInSection(sectionId);
+
+        // If all questions answered and no referrals, section is completed
+        if (sectionAnswers.length >= totalQuestionsInSection) {
+          return "completed";
+        }
+
+        // Find the next question based on the questionnaire flow
+        if (!template?.nodes || !template?.edges) return 1;
+
+        // Sort answers by question ID to process them in order
+        const sortedAnswers = [...sectionAnswers].sort((a, b) => {
+          const aNum = parseInt(a.questionId) || 0;
+          const bNum = parseInt(b.questionId) || 0;
+          return aNum - bNum;
+        });
+
+        console.log(`🔍 Sorted answers:`, sortedAnswers.map(a => `Q${a.questionId}: "${a.answer}"`));
+
+        // Follow the flow from the beginning to find the actual next question
+        let currentQuestionId = 1; // Start from first question
+        const sectionIndex = sections.findIndex(s => s.id === sectionId);
+
+        for (const answerObj of sortedAnswers) {
+          const questionId = parseInt(answerObj.questionId);
+          const answer = answerObj.answer;
+
+          console.log(`🔍 Processing Q${questionId} with answer: "${answer}"`);
+
+          // If this is the question we're looking for, find its next question
+          if (questionId === currentQuestionId) {
+            const templateQuestionId = `template-${sectionIndex}-${questionId}`;
+            const outgoingEdges = template.edges.filter((e: any) => e.source === templateQuestionId);
+
+            // Find the edge that matches this answer
+            const matchingEdge = outgoingEdges.find((edge: any) => {
+              return checkEdgeCondition(edge, answer);
+            });
+
+            if (matchingEdge && matchingEdge.target) {
+              // Extract the numeric question ID from the target
+              const targetQuestionId = matchingEdge.target.replace(/^template-\d+-/, '');
+              const nextQuestionNum = parseInt(targetQuestionId) || targetQuestionId;
+
+              console.log(`🔍 Q${questionId} ("${answer}") leads to Q${nextQuestionNum}`);
+              currentQuestionId = nextQuestionNum;
+            } else {
+              // No matching edge found, try next sequential question
+              currentQuestionId = questionId + 1;
+              console.log(`🔍 No matching edge for Q${questionId}, trying Q${currentQuestionId}`);
+            }
+          }
+        }
+
+        // Simply return the current question ID based on the flow
+        // Don't check if it's answered or not - just follow the questionnaire flow
+        console.log(`🎯 Final nextQuestionId: ${currentQuestionId} (based on questionnaire flow)`);
+        return currentQuestionId;
+      };
+
+      // Create questionnaire sections for all sections
+      const sections = getSections();
+      const questionnaireSections = sections.map((section: any) => {
+        // Get existing answers for this section from the original assessment data
+        const existingSectionAnswers = templatesData?.assessment?.sections?.[sections.indexOf(section)]?.answers || [];
+        
+        // Get new answers for this section from current state
+        const newSectionAnswers = Object.entries(answers)
+          .filter(([questionId, answer]) => {
+            // Check if this question belongs to this section
+            const question = template?.nodes.find(n => n.id === questionId);
+            return question?.data?.templateSection === section.id;
+          })
+          .map(([questionId, answer]) => {
+            // Extract numeric part from template-X-Y format
+            const numericQuestionId = questionId.replace(/^template-\d+-/, '');
+            return {
+              questionId: numericQuestionId,
+              answer: answer || '',
+              answeredAt: new Date().toISOString()
+            };
+          });
+
+        console.log(`📊 Section ${section.id} - Existing answers:`, existingSectionAnswers);
+        console.log(`📊 Section ${section.id} - New answers:`, newSectionAnswers);
+
+        // Merge existing and new answers - PATCH logic
+        const mergedAnswers = [...existingSectionAnswers];
+        
+        newSectionAnswers.forEach(newAnswer => {
+          const existingIndex = mergedAnswers.findIndex(existing => existing.questionId === newAnswer.questionId);
+          
+          if (existingIndex >= 0) {
+            // Update existing answer
+            mergedAnswers[existingIndex] = {
+              ...mergedAnswers[existingIndex],
+              answer: newAnswer.answer,
+              answeredAt: newAnswer.answeredAt
+            };
+            console.log(`🔄 Updated existing answer for question ${newAnswer.questionId}`);
+          } else {
+            // Add new answer
+            mergedAnswers.push(newAnswer);
+            console.log(`➕ Added new answer for question ${newAnswer.questionId}`);
+          }
+        });
+
+        console.log(`📊 Section ${section.id} - Merged answers:`, mergedAnswers);
+
+        // Use merged answers for the rest of the logic
+        const sectionAnswers = mergedAnswers;
+
+        // Get total questions for this section (only reachable questions based on current flow)
+        const totalQuestionsInSection = getTotalQuestionsInSection(section.id);
+        
+        // Calculate section status based on the NEW PAGE requirements:
+        // - "completed" if all questions answered and no referrals
+        // - "blocked" if any question has referral
+        // - "inProgress" for other cases
+        let sectionStatus: 'inProgress' | 'blocked' | 'completed';
+
+        // Check if any question in this section has a referral
+        // We need to check using the original template question IDs, not the transformed ones
+        const sectionHasReferral = Object.entries(answers)
+          .filter(([questionId]) => {
+            // Check if this question belongs to this section
+            const question = template?.nodes.find(n => n.id === questionId);
+            return question?.data?.templateSection === section.id;
+          })
+          .some(([questionId, answer]) => {
+            const referralText = getEndActionForAnswer(questionId, answer);
+            console.log(`🔍 Checking referral for ${questionId}: answer="${answer}", referralText="${referralText || 'none'}"`);
+            return referralText !== null;
+          });
+
+        if (sectionHasReferral) {
+          sectionStatus = 'blocked';
+        } else if (sectionAnswers.length === totalQuestionsInSection) {
+          // All questions answered and no referrals
+          sectionStatus = 'completed';
+        } else {
+          // Some questions not answered
+          sectionStatus = 'inProgress';
+        }
+
+        // Calculate nextQuestionId based on questionnaire flow
+        const nextQuestionId = calculateNextQuestionId(section.id, sectionAnswers, sectionHasReferral);
+
+        return {
+          sectionVersionId: section.data?.sectionVersionId || sectionVersionId || '68b18619e0337e146a5230bf',
+          answers: mergedAnswers, // Use merged answers instead of just new ones
+        
+          progress: {
+            nextQuestionId: nextQuestionId,
+            currentQuestionIndex: section.id === sections[currentSectionIndex]?.id ? currentQuestionInSection : 0,
+            totalQuestionsInSection: totalQuestionsInSection, // Use reachable questions in section
+            answeredQuestionsInSection: mergedAnswers.length, // Use merged answers length
+            status: sectionStatus // Keep status in progress as well for backward compatibility
+          }
+        };
+      });
+
+      // Calculate overall progress using merged answers from all sections
+      const allMergedAnswers = questionnaireSections.flatMap(section => section.answers);
+      const answeredQuestions = allMergedAnswers.filter(answer => {
+        const questionId = answer.questionId;
+        const answerValue = answer.answer;
+        
+        // Check if this answer leads to a referral
+        const leadsToReferral = doesQuestionLeadToReferral(questionId, answerValue);
+        console.log(`🔍 Overall progress - Question ${questionId}: answer="${answerValue}", leadsToReferral=${leadsToReferral}`);
+        return !leadsToReferral;
+      }).length;
+      
+      console.log(`📊 Overall progress: ${answeredQuestions}/${totalQuestions} (excluding referrals)`);
+      
+      const overallProgress = calculateWeightedProgress();
+
+      // Determine status using the new status tracking logic
+      // NEW PAGE RULE: Never set overall status to "blocked", always use "inProgress" for blocked sections
+      let status: 'inProgress' | 'completed';
+
+      if (isCompleted) {
+        // Final submit - use overall assessment status (can be completed)
+        const assessmentStatus = getOverallAssessmentStatus();
+        // In /new page: if any section is blocked, overall should be "inProgress"
+        status = assessmentStatus === 'blocked' ? 'inProgress' : assessmentStatus === 'completed' ? 'completed' : 'inProgress';
+        console.log(`🔚 Final submit: Status set to ${status.toUpperCase()} (original: ${assessmentStatus})`);
+        } else {
+        // During assessment - always keep as inProgress (never blocked at overall level)
+        status = 'inProgress';
+        console.log(`🔄 During assessment: Status set to ${status.toUpperCase()}`);
+      }
+
+      // Create overall progress with status inside
+      const overallProgressData = {
+        currentSectionIndex: currentSectionIndex,
+        totalSections: template?.nodes?.filter(node => node.type === 'sectionNode').length || 1,
+        overallProgress,
+        totalQuestions,
+        answeredQuestions,
+        status: status // Move overall status inside overallProgress
+      };
+
+      const updateInput: UpdateAssessmentInput = {
+        questionnaire: questionnaireSections,
+        overallProgress: overallProgressData
+      };
+
+      console.log('📊 Update input:', updateInput);
+
+      const result = await updateAssessment({
+        variables: {
+          assessmentId: currentAssessmentId,
+          input: updateInput
+        }
+      });
+
+      console.log('✅ Assessment updated successfully:', result.data);
+      
+      if (result.data?.updateAssessment.status === 'success') {
+        // Update local state with the response
+        
+        // Update saved answers after successful API call
+        setSavedAnswers({ ...answers });
+        console.log('💾 Updated savedAnswers after API call:', answers);
+        
+        // Extract and store section status from API response for real-time updates
+        if (result.data?.updateAssessment?.assessment?.sections && Array.isArray(result.data.updateAssessment.assessment.sections)) {
+          const apiSections = result.data.updateAssessment.assessment.sections;
+          const newSectionStatus: Record<string, string> = {};
+          
+          apiSections.forEach((apiSection: any, index: number) => {
+            const sectionId = `template-section-${index}`;
+            const sectionStatus = apiSection.progress?.status;
+            
+            if (sectionStatus) {
+              newSectionStatus[sectionId] = sectionStatus;
+              console.log(`🔄 Updated real-time status for ${sectionId}: ${sectionStatus}`);
+            }
+          });
+          
+          // Update real-time section status
+          setRealTimeSectionStatus(prev => ({
+            ...prev,
+            ...newSectionStatus
+          }));
+          
+          console.log('🔄 Real-time section status updated:', newSectionStatus);
+          
+          // CRITICAL FIX: Update templatesData with fresh API response data
+          // This ensures navigation logic uses the latest nextQuestionId values
+          if (templatesData?.assessment) {
+            const updatedTemplatesData = {
+              ...templatesData,
+              assessment: {
+                ...templatesData.assessment,
+                sections: apiSections
+              }
+            };
+            
+            // Update the templatesData state
+            setTemplatesDataState(updatedTemplatesData);
+            
+            // Also update the store with fresh data
+            // This ensures the data persists when navigating back to assessment page
+            const storeData = getTemplatesData();
+            if (storeData) {
+              const updatedStoreData = {
+                ...storeData,
+                assessment: {
+                  ...storeData.assessment,
+                  sections: apiSections
+                }
+              };
+              
+              // Update the store with fresh assessment data
+              setTemplatesData(updatedStoreData);
+              console.log('✅ Updated store with fresh assessment data');
+              console.log('📊 Store now has correct nextQuestionId values');
+            }
+            
+            console.log('✅ Updated templatesData with fresh API response data');
+            console.log('📊 Fresh sections data:', apiSections.map(s => ({
+              sectionName: s.sectionName,
+              nextQuestionId: s.progress?.nextQuestionId,
+              status: s.progress?.status
+            })));
+          }
+        }
+        
+        if (isCompleted) {
+          // Redirect to assessment list or show completion message
+          router.push('/assessment');
+        }
+      }
+
+    } catch (error) {
+      console.error('❌ Error updating assessment:', error);
+    }
+  };
+
+  const handleNextSection = async () => {
+    const sections = getSections();
+    if (currentSectionIndex < sections.length - 1) {
+      // Update assessment before moving to next section
+      await handleUpdateAssessment(false);
+      
+      setCurrentSectionIndex((p) => p + 1);
+      setCurrentQuestionInSection(0); // Reset to first question in new section
+      questionsTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  // Helper function to get expected next question based on current questionnaire flow
+  const getExpectedNextQuestion = (questionId: string, answer: any) => {
+    if (!template?.edges || !questionId || !answer) return null;
+
+    console.log(`🔍 Calculating expected next question for ${questionId} with answer:`, answer);
+
+    // Find edges from the current question
+    const outgoingEdges = template.edges.filter((e: any) => e.source === questionId);
+
+    if (outgoingEdges.length === 0) {
+      console.log(`🔍 No outgoing edges found for ${questionId}`);
+      return null;
+    }
+
+    // Find the edge that matches the current answer
+    const matchingEdge = outgoingEdges.find((e: any) => {
+      return checkEdgeCondition(e, answer);
+    });
+
+    if (matchingEdge) {
+      // Extract question ID from target (e.g., "template-0-q5" -> "5")
+      const targetQuestionId = matchingEdge.target.replace(/^template-\d+-/, '');
+      const questionNumber = parseInt(targetQuestionId) || targetQuestionId;
+
+      console.log(`🔍 Expected next question: ${questionNumber} (from edge to ${matchingEdge.target})`);
+      return questionNumber;
+    }
+
+    console.log(`🔍 No matching edge found for answer:`, answer);
+    return null;
+  };
+
+  const handleNextQuestion = async () => {
+    const sections = getSections();
+    const currentSection = sections[currentSectionIndex];
+    if (!currentSection) return;
+
+    // Get current question details
+    const currentQuestions = getCurrentSectionQuestions();
+    const currentQuestion = currentQuestions[currentQuestionInSection];
+    const currentAnswer = answers[currentQuestion?.id];
+
+    console.log(`🔄 Moving to next question from ${currentQuestion?.id} with answer:`, currentAnswer);
+
+    // Compare current answer with saved answer to decide if API call is needed
+    const savedAnswer = savedAnswers[currentQuestion?.id];
+    const isSameAsSaved = savedAnswer === currentAnswer;
+    
+    console.log(`🔍 API comparison:`, {
+      questionId: currentQuestion?.id,
+      currentAnswer,
+      savedAnswer,
+      isSameAsSaved,
+      hasSavedData: Object.keys(savedAnswers).length > 0
+    });
+
+    // Only call API if the answer is different from what was previously saved
+    if (!isSameAsSaved) {
+      console.log(`🔄 Calling updateAssessment API for question ${currentQuestion?.id} - answer changed`);
+      await handleUpdateAssessment(false);
+      console.log(`✅ updateAssessment API called successfully for question ${currentQuestion?.id}`);
+
+      // Only validate flow after API call (when answer actually changed)
+      if (templatesData?.assessment?.sections) {
+        const currentApiSection = templatesData.assessment.sections[currentSectionIndex];
+        const apiNextQuestionId = currentApiSection?.progress?.nextQuestionId;
+
+        console.log(`🔍 API returned nextQuestionId:`, apiNextQuestionId);
+
+        // Calculate what we expect the next question to be based on current flow
+        const expectedNextQuestion = getExpectedNextQuestion(currentQuestion?.id, currentAnswer);
+
+        console.log(`🔍 Expected next question:`, expectedNextQuestion);
+        console.log(`🔍 API next question:`, apiNextQuestionId);
+
+        // Compare expected vs actual nextQuestionId
+        if (expectedNextQuestion && apiNextQuestionId &&
+            expectedNextQuestion !== apiNextQuestionId &&
+            apiNextQuestionId !== 'completed' &&
+            apiNextQuestionId !== 'blocked') {
+
+          console.log(`⚠️ Flow changed! Expected: ${expectedNextQuestion}, API returned: ${apiNextQuestionId}`);
+          console.log(`🗑️ Clearing answers after ${currentQuestion?.id} due to flow change`);
+
+          // Clear answers after current question since flow changed
+          const clearedAnswers = clearAnswersAfterQuestion(currentQuestion?.id, currentAnswer);
+          setAnswers(clearedAnswers);
+        } else if (expectedNextQuestion === apiNextQuestionId) {
+          console.log(`✅ Flow unchanged, keeping existing answers`);
+        }
+      }
+    } else {
+      console.log(`⏭️ Skipping API call for question ${currentQuestion?.id} - same answer as previously saved`);
+      console.log(`✅ No flow validation needed - answer unchanged`);
+    }
+
+    const sectionQuestions = currentSection.questions;
+    if (currentQuestionInSection < sectionQuestions.length - 1) {
+      // Move to next question in current section
+      setCurrentQuestionInSection(prev => prev + 1);
+    } else {
+      // Last question in section, move to next section
+      handleNextSection();
+    }
+    questionsTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const handlePreviousQuestion = () => {
+    if (currentQuestionInSection > 0) {
+      // Move to previous question in current section
+      setCurrentQuestionInSection(prev => prev - 1);
+    } else if (currentSectionIndex > 0) {
+      // First question in section, move to last question of previous section
+      const sections = getSections();
+      const previousSection = sections[currentSectionIndex - 1];
+      if (previousSection) {
+        setCurrentSectionIndex(prev => prev - 1);
+        setCurrentQuestionInSection(previousSection.questions.length - 1);
+      }
+    }
+    questionsTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const handleSaveDraft = () => {
+    console.log("Saving draft...", answers);
+    // Just redirect to assessment page without API call
+    router.push('/assessment');
+  };
+  const handleSubmitAssessment = async () => {
+    // Save current state before navigating to review
+    localStorage.setItem('assessmentAnswers', JSON.stringify(answers));
+    localStorage.setItem('assessmentSections', JSON.stringify(sections));
+    
+    // Update assessment as inProgress (not completed yet) - allows continuation
+    await handleUpdateAssessment(false);
+
+    // Get assessmentId for navigation
+    const currentAssessmentId = assessmentId || templatesData?.assessment?.assessmentId;
+
+    console.log('🔍 Review navigation - Assessment ID sources:', {
+      fromURL: assessmentId,
+      fromStore: templatesData?.assessment?.assessmentId,
+      currentAssessmentId
+    });
+
+    // Navigate to review page with assessmentId
+    if (currentAssessmentId) {
+      console.log(`✅ Navigating to review page with ID: ${currentAssessmentId}`);
+      router.push(`/assessment/review?id=${currentAssessmentId}`);
+    } else {
+      console.error('❌ No assessmentId available for review page navigation');
+      router.push('/assessment');
+    }
+  };
+
+  // ---------------- FLOW / ORDERING / VISIBILITY HELPERS ----------------
+
+  const isQuestionNode = (n: any) =>
+    n?.type === "questionNode" &&
+    n?.data?.question &&
+    ["radio", "checkbox", "text-input", "multiple-choice", "yes-no"].includes(
+      n?.data?.questionType
+    );
+
+  const parseQId = (id: string) => {
+    // Handle template-based IDs like "template-0-1", "template-0-2", etc.
+    const templateMatch = String(id).trim().match(/^template-\d+-(\d+)([a-z])?$/i);
+    if (templateMatch) {
+      const num = parseInt(templateMatch[1], 10);
+      const suf = templateMatch[2] ? templateMatch[2].toLowerCase() : "";
+      return { num, suf };
+    }
+    
+    // Handle traditional IDs like "q1", "q2", etc.
+    const m = String(id).trim().match(/^q(\d+)([a-z])?$/i);
+    const num = m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER;
+    const suf = m && m[2] ? m[2].toLowerCase() : "";
+    return { num, suf };
+  };
+  const sortQuestions = (a: any, b: any) => {
+    const A = parseQId(a.id);
+    const B = parseQId(b.id);
+    if (A.num !== B.num) return A.num - B.num;
+    if (A.suf !== B.suf) return A.suf.localeCompare(B.suf);
+    if (a.position?.y !== b.position?.y) return (a.position?.y ?? 0) - (b.position?.y ?? 0);
+    return (a.position?.x ?? 0) - (b.position?.x ?? 0);
+  };
+
+  const getAllQuestionNodesInSection = () => {
+    if (!template?.nodes) return [];
+    return template.nodes.filter(isQuestionNode).slice().sort(sortQuestions);
+  };
+
+  const getFirstQuestionInSection = (sectionId: string) => {
+    if (!template) return null;
+    const startEdge = template.edges.find((e) => e.source === sectionId && e.target);
+    const startNode = startEdge
+      ? template.nodes.find((n) => n.id === startEdge.target)
+      : null;
+    if (startNode && isQuestionNode(startNode)) return startNode;
+    const all = getAllQuestionNodesInSection();
+    return all[0] ?? null;
+  };
+
+  const checkEdgeCondition = (edge: any, answer: any) => {
+    if (edge?.sourceHandle === "text-output" || edge?.data?.condition === "text-input") {
+      return String(answer ?? "").trim() !== "";
+    }
+
+    const expected: string[] = [];
+
+    // Collect all possible expected values for this edge
+    if (edge?.data?.optionText) expected.push(edge.data.optionText);
+
+    const sourceNode = template?.nodes.find((n) => n.id === edge.source);
+    const m = edge?.sourceHandle?.match(/option-(\d+)/);
+    if (m && sourceNode?.data?.options) {
+      const idx = parseInt(m[1], 10);
+      const opt = sourceNode.data.options[idx];
+      if (opt) expected.push(opt);
+    }
+
+    if (edge?.label) expected.push(edge.label);
+
+    // Check if answer matches any expected value
+    let matches = false;
+    if (Array.isArray(answer)) {
+      matches = answer.some((a) => expected.includes(a));
+    } else {
+      matches = expected.includes(answer);
+    }
+
+    console.log(`🔍 Edge condition check: answer="${answer}", expected=[${expected.join(', ')}], matches=${matches}`);
+    return matches;
+  };
+
+  // Get section completion status for UI display: 'not-started', 'in-progress', 'completed', 'blocked'
+  const getSectionCompletionStatus = (sectionId: string): 'not-started' | 'in-progress' | 'completed' | 'blocked' => {
+    const section = sections.find((s: any) => s.id === sectionId);
+    if (!section) return 'not-started';
+
+    // First check if we have real-time status from recent API calls
+    if (realTimeSectionStatus[sectionId]) {
+      const realTimeStatus = realTimeSectionStatus[sectionId];
+      console.log(`🔍 Section ${sectionId} real-time status:`, realTimeStatus);
+      return realTimeStatus as 'not-started' | 'in-progress' | 'completed' | 'blocked';
+    }
+
+    // Fallback to API data with blocked status
+    if (templatesData?.assessment?.sections) {
+      const apiSections = templatesData.assessment.sections;
+      const sectionIndex = sections.findIndex(s => s.id === sectionId);
+      
+      if (sectionIndex >= 0 && sectionIndex < apiSections.length) {
+        const apiSection = apiSections[sectionIndex];
+        const apiStatus = apiSection.progress?.status;
+        
+        console.log(`🔍 Section ${sectionId} API status:`, apiStatus);
+        
+        // If API says section is blocked, return blocked
+        if (apiStatus === 'blocked') {
+          return 'blocked';
+        }
+      }
+    }
+
+    const sectionQuestions = section.questions || [];
+    if (sectionQuestions.length === 0) return 'completed';
+
+    // Count answered questions in this section
+    const answeredQuestions = sectionQuestions.filter((question: any) => {
+      const answer = answers[question.id];
+      return answer !== undefined && answer !== null && answer !== "";
+    });
+
+    const answeredCount = answeredQuestions.length;
+    const totalCount = sectionQuestions.length;
+
+    if (answeredCount === 0) {
+      return 'not-started';
+    } else if (answeredCount === totalCount) {
+      return 'completed';
+    } else {
+      return 'in-progress';
+    }
+  };
+
+  // Check if a section is completed (for backward compatibility)
+  const isSectionCompleted = (sectionId: string): boolean => {
+    return getSectionCompletionStatus(sectionId) === 'completed';
+  };
+
+  // Check if a tab should be disabled (sequential flow logic)
+  const isTabDisabled = (sectionIndex: number): boolean => {
+    // First section (index 0) is always enabled
+    if (sectionIndex === 0) return false;
+
+    // For subsequent sections, check if all previous sections are completed or blocked
+    for (let i = 0; i < sectionIndex; i++) {
+      const previousSection = sections[i];
+      const sectionStatus = getSectionCompletionStatus(previousSection.id);
+      if (previousSection && sectionStatus !== 'completed' && sectionStatus !== 'blocked') {
+        return true; // Disable if any previous section is not completed or blocked
+      }
+    }
+
+    return false; // Enable if all previous sections are completed or blocked
+  };
+
+  const getEndActionForAnswer = (sourceId: string, answer: any): string | null => {
+    if (!template || answer === undefined || answer === null || answer === "") return null;
+    
+    // Find the question node
+    const questionNode = template.nodes.find(n => n.id === sourceId);
+    if (!questionNode || !questionNode.data) return null;
+
+    console.log(`🔍 Checking end action for question ${sourceId} with answer "${answer}"`);
+    console.log(`🔍 Question options data:`, questionNode.data.optionsData);
+
+    // Check if the question has optionsData with referralText
+    if (questionNode.data.optionsData && Array.isArray(questionNode.data.optionsData)) {
+      // Find the matching option based on the answer
+      const matchingOption = questionNode.data.optionsData.find((option: any) => {
+        if (Array.isArray(answer)) {
+          return answer.includes(option.text);
+        } else {
+          return option.text === answer;
+        }
+      });
+
+      if (matchingOption && matchingOption.referralText) {
+        console.log(`🔚 Referral text found: ${matchingOption.referralText}`);
+        return matchingOption.referralText;
+      }
+    }
+
+    // Fallback: Check if the question has options array with referralText
+    if (questionNode.data.options && Array.isArray(questionNode.data.options)) {
+      // Find the matching option based on the answer
+      const matchingOption = questionNode.data.options.find((option: any) => {
+        if (Array.isArray(answer)) {
+          return answer.includes(option.text);
+        } else {
+          return option.text === answer;
+        }
+      });
+
+      if (matchingOption && matchingOption.referralText) {
+        console.log(`🔚 Referral text found in options: ${matchingOption.referralText}`);
+        return matchingOption.referralText;
+      }
+    }
+
+    console.log(`🔍 No referral text found for answer "${answer}"`);
+    return null;
+  };
+
+  // Get the status of a specific question
+  const getQuestionStatus = (questionId: string): 'inProgress' | 'blocked' => {
+    const answer = answers[questionId];
+    if (!answer) return 'inProgress';
+    
+    const referralText = getEndActionForAnswer(questionId, answer);
+    return referralText ? 'blocked' : 'inProgress';
+  };
+
+  // Get the status of a specific section
+  const getSectionStatus = (sectionId: string): 'inProgress' | 'blocked' => {
+    const section = getSections().find(s => s.id === sectionId);
+    if (!section || !section.questions) {
+      console.log(`⚠️  Section ${sectionId}: No section or questions found, defaulting to inProgress`);
+      return 'inProgress';
+    }
+
+    // Check if any question in this section is blocked
+    const questionStatuses = section.questions.map((question: any) => {
+      const questionStatus = getQuestionStatus(question.id);
+      const answer = answers[question.id];
+      const referralText = getEndActionForAnswer(question.id, answer);
+      console.log(`  ❓ Question ${question.id}: ${questionStatus.toUpperCase()} (answer: "${answer}", referralText: "${referralText || 'none'}")`);
+      return questionStatus;
+    });
+
+    const hasBlockedQuestion = questionStatuses.includes('blocked');
+    const sectionStatus = hasBlockedQuestion ? 'blocked' : 'inProgress';
+
+    console.log(`  📁 Section ${sectionId} final status: ${sectionStatus.toUpperCase()}`);
+    return sectionStatus;
+  };
+
+  // Get the overall assessment status
+  const getOverallAssessmentStatus = (): 'inProgress' | 'blocked' | 'completed' => {
+    const sections = getSections();
+
+    console.log('🔍 Status Flow Analysis:');
+    console.log('========================');
+
+    // Check each section status
+    const sectionStatuses = sections.map(section => {
+      const sectionStatus = getSectionStatus(section.id);
+      console.log(`📁 Section ${section.id}: ${sectionStatus.toUpperCase()}`);
+      return sectionStatus;
+    });
+
+    // Check if any section is blocked
+    const hasBlockedSection = sectionStatuses.includes('blocked');
+
+    if (hasBlockedSection) {
+      console.log('🚫 Assessment Status: BLOCKED (has blocked section)');
+      return 'blocked';
+    }
+
+    // Check if all questions are answered (no inProgress questions)
+    const allQuestions = getQuestionNodes();
+    const hasUnansweredQuestions = allQuestions.some(question => {
+      const answer = answers[question.id];
+      return !answer || answer === '';
+    });
+
+    const finalStatus = hasUnansweredQuestions ? 'inProgress' : 'completed';
+    console.log(`📊 Assessment Status: ${finalStatus.toUpperCase()} (hasUnansweredQuestions: ${hasUnansweredQuestions})`);
+    console.log('========================');
+
+    return finalStatus;
+  };
+
+  const getReachableQuestions = (sectionId: string) => {
+    if (!template?.nodes || !template?.edges) return [];
+
+    const start = getFirstQuestionInSection(sectionId);
+    if (!start) return [];
+
+    const visited = new Set<string>();
+    const queue: string[] = [start.id];
+
+    // console.log("visited=====>",visited)
+
+    while (queue.length) {
+      const nodeId = queue.shift()!;
+      if (visited.has(nodeId)) continue;
+      visited.add(nodeId);
+
+      const nodeAnswer = answers[nodeId];
+
+      
+      // Check if this answer has referralText (which means end of flow)
+      const hasReferralText = getEndActionForAnswer(nodeId, nodeAnswer) !== null;
+
+      if (nodeAnswer === undefined || nodeAnswer === null || nodeAnswer === "") {
+        // If no answer yet, show all possible next questions
+        const outgoing = template.edges.filter((e) => e.source === nodeId);
+        outgoing
+          .filter((e) => e.target)
+          .forEach((e) => {
+            if (e.target && !visited.has(e.target)) queue.push(e.target);
+          });
+      } else if (!hasReferralText) {
+        // If answered and no referral text, continue to next questions
+        const outgoing = template.edges.filter((e) => e.source === nodeId);
+        const matched = outgoing.filter((e) => checkEdgeCondition(e, nodeAnswer));
+          matched.forEach((e) => {
+            if (e.target && !visited.has(e.target)) queue.push(e.target);
+          });
+        }
+      // If hasReferralText is true, stop adding more questions to the queue
+    }
+
+    const nodes = Array.from(visited)
+    
+      .map((id) => template.nodes.find((n) => n.id === id))
+      .filter(Boolean)
+      .filter(isQuestionNode) as any[];
+
+    nodes.sort(sortQuestions);
+
+    return nodes;
+  };
+
+  const getQuestionsForSection = (sectionId: string) => {
+    if (!template?.nodes) return [];
+
+    // For template-based sections, implement proper navigation logic
+    if (sectionId.startsWith('template-section-')) {
+      // Get all questions that belong to this template section
+      const allSectionQuestions = template.nodes
+        .filter((node) =>
+          isQuestionNode(node) &&
+          node.data?.templateSection === sectionId
+        )
+        .sort(sortQuestions);
+
+      if (allSectionQuestions.length === 0) return [];
+
+      // Find the first question in this section
+      const firstQuestion = allSectionQuestions[0];
+      if (!firstQuestion) return [];
+
+      // Use the reachable questions logic starting from the first question
+      const visited = new Set<string>();
+      const queue: string[] = [firstQuestion.id];
+      const reachableQuestions: any[] = [];
+
+      while (queue.length) {
+        const nodeId = queue.shift()!;
+        if (visited.has(nodeId)) continue;
+        visited.add(nodeId);
+
+        // Find the actual node
+        const node = template.nodes.find(n => n.id === nodeId);
+        if (node && isQuestionNode(node) && node.data?.templateSection === sectionId) {
+          reachableQuestions.push(node);
+        }
+
+        const nodeAnswer = answers[nodeId];
+        
+        // Check if this answer has referralText (which means end of flow)
+        const hasReferralText = getEndActionForAnswer(nodeId, nodeAnswer) !== null;
+
+        if (nodeAnswer === undefined || nodeAnswer === null || nodeAnswer === "") {
+          // If no answer yet, show all possible next questions
+          const outgoing = template.edges.filter((e) => e.source === nodeId);
+          outgoing
+            .filter((e) => e.target)
+            .forEach((e) => {
+              if (e.target && !visited.has(e.target)) {
+                const targetNode = template.nodes.find(n => n.id === e.target);
+                if (targetNode && targetNode.data?.templateSection === sectionId) {
+                  queue.push(e.target);
+                }
+              }
+            });
+        } else if (!hasReferralText) {
+          // If answered and no referral text, continue to next questions
+          const outgoing = template.edges.filter((e) => e.source === nodeId);
+          const matched = outgoing.filter((e) => checkEdgeCondition(e, nodeAnswer));
+            matched.forEach((e) => {
+              if (e.target && !visited.has(e.target)) {
+                const targetNode = template.nodes.find(n => n.id === e.target);
+                if (targetNode && targetNode.data?.templateSection === sectionId) {
+                  queue.push(e.target);
+                }
+              }
+            });
+          }
+        // If hasReferralText is true, stop adding more questions to the queue
+      }
+
+      console.log(`🔍 Section ${sectionId}: Found ${reachableQuestions.length} reachable questions`);
+      return reachableQuestions.sort(sortQuestions);
+    }
+
+    // For traditional sections, use the existing reachable questions logic
+    return getReachableQuestions(sectionId);
+  };
+
+  const getSections = () => {
+    if (!template?.nodes) return [];
+    const sections = template.nodes
+      .filter((n) => n.type === "sectionNode" && n.data?.sectionName)
+      .sort((a, b) => {
+        // Handle both traditional section-X and template-section-X formats
+        const aNum = a.id.startsWith('template-section-')
+          ? parseInt(a.id.replace('template-section-', ''), 10)
+          : parseInt(String(a.id).replace("section-", ""), 10);
+        const bNum = b.id.startsWith('template-section-')
+          ? parseInt(b.id.replace('template-section-', ''), 10)
+          : parseInt(String(b.id).replace("section-", ""), 10);
+        return (isNaN(aNum) ? 9999 : aNum) - (isNaN(bNum) ? 9999 : bNum);
+      });
+
+    console.log('🔍 Found sections:', sections.map(s => ({ id: s.id, name: s.data?.sectionName })));
+
+    return sections.map((section) => ({
+      ...section,
+      questions: getQuestionsForSection(section.id),
+    }));
+  };
+
+  const getQuestionNodes = () => {
+    const sec = getSections();
+    return sec.flatMap((s: any) => s.questions);
+  };
+
+  // Get total questions in a section (only reachable questions based on current flow)
+  const getTotalQuestionsInSection = (sectionId: string) => {
+    if (!template?.nodes) return 0;
+
+    // Always use reachable questions logic for dynamic calculation
+    return getQuestionsForSection(sectionId).length;
+  };
+
+  // Get total questions across all sections (only reachable questions based on current flow)
+  const getTotalQuestionsInAllSections = () => {
+    if (!template?.nodes) return 0;
+
+    const sections = getSections();
+    let total = 0;
+
+    sections.forEach((section) => {
+      total += getTotalQuestionsInSection(section.id);
+    });
+
+    return total;
+  };
+
+  const handleSectionChange = (i: number) => {
+    debugger;
+    setCurrentSectionIndex(i);
+    setCurrentQuestionInSection(0); // Reset to first question in new section
+    questionsTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  // Helper functions for single question display
+  const getCurrentQuestion = () => {
+    const sections = getSections();
+    const currentSection = sections[currentSectionIndex];
+    if (!currentSection || !currentSection.questions) return null;
+    return currentSection.questions[currentQuestionInSection] || null;
+  };
+
+  const getCurrentSectionQuestions = () => {
+    const sections = getSections();
+    const currentSection = sections[currentSectionIndex];
+    return currentSection?.questions || [];
+  };
+
+  const getAnsweredQuestionsInCurrentSection = () => {
+    const sectionQuestions = getCurrentSectionQuestions();
+    const answeredIndices = new Set<number>();
+    sectionQuestions.forEach((question, index) => {
+      if (answers[question.id] !== undefined && answers[question.id] !== null && answers[question.id] !== '') {
+        answeredIndices.add(index);
+      }
+    });
+    return answeredIndices;
+  };
+
+  const isFirstQuestion = () => {
+    return currentSectionIndex === 0 && currentQuestionInSection === 0;
+  };
+
+  const isLastQuestion = () => {
+    const sections = getSections();
+    const isLastSection = currentSectionIndex === sections.length - 1;
+    const currentSection = sections[currentSectionIndex];
+    const isLastQuestionInSection = currentSection && currentQuestionInSection === currentSection.questions.length - 1;
+    return isLastSection && isLastQuestionInSection;
+  };
+
+  const isLastQuestionInSection = () => {
+    const currentSection = getSections()[currentSectionIndex];
+    return currentSection && currentQuestionInSection === currentSection.questions.length - 1;
+  };
+
+  const isCurrentQuestionAnswered = () => {
+    const currentQuestion = getCurrentQuestion();
+    if (!currentQuestion) return false;
+
+    const answer = answers[currentQuestion.id];
+    return answer !== undefined && answer !== null && answer !== '';
+  };
+
+  const handleQuestionClick = (questionIndex: number) => {
+    setCurrentQuestionInSection(questionIndex);
+    questionsTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  // ---------------- PROGRESS & STATUS ----------------
+
+  // Helper function to check if a question leads to referral text
+  const doesQuestionLeadToReferral = (questionId: string, answer: any): boolean => {
+    if (!answer) return false;
+    
+    // Use the same logic as getEndActionForAnswer to detect referrals
+    const referralText = getEndActionForAnswer(questionId, answer);
+    return referralText !== null;
+  };
+
+  const calculateWeightedProgress = () => {
+    const sections = getSections();
+    if (sections.length === 0) return 0;
+
+    let totalWeightedCompletion = 0;
+    let totalWeight = 0;
+
+    sections.forEach((section: any) => {
+      const sectionWeight = 1;
+      const totalQuestionsInSection = getTotalQuestionsInSection(section.id); // Use reachable questions only
+
+      if (totalQuestionsInSection === 0) {
+        totalWeight += sectionWeight;
+        return;
+      }
+
+      // Count answered questions for this section (only reachable questions in current flow)
+      // EXCLUDE questions that lead to referral text from answered count
+      const reachableQuestions = getQuestionsForSection(section.id);
+      const answeredQuestions = reachableQuestions.filter((question) => {
+        const answer = answers[question.id];
+        if (answer === undefined || answer === null || answer === '') {
+          return false;
+        }
+        
+        // Check if this answer leads to referral text - if so, don't count it as answered
+        const leadsToReferral = doesQuestionLeadToReferral(question.id, answer);
+        return !leadsToReferral;
+      }).length;
+
+      const sectionCompletion = (answeredQuestions / totalQuestionsInSection) * 100;
+
+      totalWeightedCompletion += sectionCompletion * sectionWeight;
+      totalWeight += sectionWeight;
+    });
+
+    const weightedAverage = totalWeight > 0 ? totalWeightedCompletion / totalWeight : 0;
+    return Math.round(weightedAverage);
+  };
+
+  useEffect(() => {
+    if (!template?.nodes || !template?.edges || !isUserSet) return;
+    const visibleQuestions = getQuestionNodes();
+    if (currentQuestionIndex >= visibleQuestions.length && visibleQuestions.length > 0) {
+      setCurrentQuestionIndex(visibleQuestions.length - 1);
+    }
+  }, [answers, template, isUserSet, currentQuestionIndex]);
+
+  // Reset question index when section changes (but not during auto-navigation)
+  useEffect(() => {
+    if (!autoNavigationAttempted.current) {
+      console.log(`🔄 Resetting question index to 0 due to section change (not during auto-navigation)`);
+    setCurrentQuestionInSection(0);
+    } else {
+      console.log(`🔄 Skipping question index reset - auto-navigation in progress`);
+    }
+  }, [currentSectionIndex]);
+
+  // Ensure current question index is valid for the current section
+  useEffect(() => {
+    const currentSectionQuestions = getCurrentSectionQuestions();
+    if (currentQuestionInSection >= currentSectionQuestions.length && currentSectionQuestions.length > 0) {
+      setCurrentQuestionInSection(currentSectionQuestions.length - 1);
+    }
+  }, [currentSectionIndex, currentQuestionInSection, template]);
+
+  // Reset auto-navigation flag when templates data changes (so it can re-run)
+  useEffect(() => {
+    if (templatesData?.assessment?.sections) {
+      console.log('🔄 Templates data changed, resetting auto-navigation flags');
+      console.log('🎯 Current nextQuestionId:', templatesData.assessment.sections[0]?.progress?.nextQuestionId);
+      autoNavigationAttempted.current = false;
+      lastAutoNavigationTime.current = 0;
+      
+      // Force a re-run of auto-navigation by triggering a state change
+      console.log('🚀 Triggering auto-navigation re-run with fresh data');
+      // Use a small delay to ensure the state is updated
+      setTimeout(() => {
+        if (template && mounted) {
+          console.log('🎯 Forcing auto-navigation with fresh nextQuestionId');
+          // This will trigger the auto-navigation useEffect to run again
+          setCurrentSectionIndex(prev => prev); // Trigger a re-render
+        }
+      }, 100);
+    }
+  }, [templatesData, template, mounted]);
+
+  // Auto-navigate using nextQuestionId from getAssessment API response
+  useEffect(() => {
+    const autoNavigateUsingApiData = () => {
+      const callId = Math.random().toString(36).substr(2, 9);
+      const now = Date.now();
+      const timeSinceLastCall = now - lastAutoNavigationTime.current;
+      
+      console.log(`🔄 AUTO-NAVIGATION CALLED [${callId}]: template=${!!template}, mounted=${mounted}, hasAutoNavigated=${hasAutoNavigated}, isEditing=${templatesData?.isEditing}, attempted=${autoNavigationAttempted.current}, timeSinceLastCall=${timeSinceLastCall}ms`);
+      
+      if (!template || !mounted) {
+        console.log(`🚫 Auto-navigation skipped [${callId}]: template=${!!template}, mounted=${mounted}`);
+        return;
+      }
+
+      // Skip only if we've already navigated and don't have fresh data
+      // If we have fresh data (nextQuestionId), always allow navigation
+      const hasFreshData = templatesData?.assessment?.sections?.[0]?.progress?.nextQuestionId;
+      if (autoNavigationAttempted.current && !hasFreshData) {
+        console.log(`🚫 Auto-navigation skipped [${callId}]: Already attempted and no fresh data`);
+        return;
+      }
+      
+      if (hasFreshData) {
+        console.log(`🎯 Fresh data detected (nextQuestionId: ${hasFreshData}), allowing navigation`);
+      }
+
+      // Mark that we've attempted auto-navigation
+      autoNavigationAttempted.current = true;
+      lastAutoNavigationTime.current = now;
+      console.log(`✅ Auto-navigation proceeding [${callId}]`);
+
+      // Check if we have specific section and question indices from URL parameters
+      if (sectionIndexParam !== null && questionIndexParam !== null) {
+        const targetSectionIndex = parseInt(sectionIndexParam);
+        const targetQuestionIndex = parseInt(questionIndexParam);
+        
+        if (!isNaN(targetSectionIndex) && !isNaN(targetQuestionIndex)) {
+          console.log(`🎯 Using URL parameters: Section ${targetSectionIndex}, Question ${targetQuestionIndex}`);
+          
+          // Navigate to the specified section and question
+          if (targetSectionIndex !== currentSectionIndex) {
+            console.log(`📍 Navigating to section ${targetSectionIndex} from URL`);
+            setCurrentSectionIndex(targetSectionIndex);
+          }
+          if (targetQuestionIndex !== currentQuestionInSection) {
+            console.log(`📍 Navigating to question ${targetQuestionIndex} from URL`);
+            setCurrentQuestionInSection(targetQuestionIndex);
+          }
+          
+          setHasAutoNavigated(true);
+          return;
+        }
+      }
+
+      // Check if we have assessment data from getAssessment API
+      if (!templatesData?.assessment?.sections) {
+        console.log(`🚫 No assessment data available for auto-navigation`);
+        return;
+      }
+
+      const apiSections = templatesData.assessment.sections;
+      console.log(`🎯 Auto-navigation using API data: ${apiSections.length} sections`);
+      console.log(`🎯 API sections:`, apiSections.map(s => ({
+        name: s.sectionName,
+        index: s.sectionIndex,
+        progress: s.progress
+      })));
+      console.log(`🎯 DEBUG: First section nextQuestionId:`, apiSections[0]?.progress?.nextQuestionId);
+
+      let targetSectionIndex = 0;
+      let targetQuestionIndex = 0;
+      let foundTarget = false;
+
+      // First, check for blocked sections (priority in edit mode)
+      if (templatesData?.isEditing) {
+        console.log(`🔍 Edit mode: Checking for blocked sections first`);
+        console.log(`🔍 Total sections to check: ${apiSections.length}`);
+        
+        // Loop through all sections to find the first blocked section
+        for (let i = 0; i < apiSections.length; i++) {
+          const apiSection = apiSections[i];
+          const progress = apiSection.progress;
+
+          console.log(`🔍 Section ${i} (${apiSection.sectionName}):`, {
+            status: progress?.status,
+            nextQuestionId: progress?.nextQuestionId,
+            currentQuestionIndex: progress?.currentQuestionIndex,
+            answeredQuestions: progress?.answeredQuestionsInSection,
+            totalQuestions: progress?.totalQuestionsInSection
+          });
+
+          // Check if section is blocked - prioritize this in edit mode
+          if (progress?.status === 'blocked' && progress?.nextQuestionId === 'blocked') {
+            console.log(`🚫 FOUND FIRST BLOCKED SECTION: Section ${i} - status: ${progress?.status}, nextQuestionId: ${progress?.nextQuestionId}`);
+            targetSectionIndex = i;
+
+            // For blocked sections, use the nextQuestionId to find the specific blocked question
+            const sectionQuestions = getQuestionsForSection(`template-section-${i}`);
+            let blockedQuestionIndex = 0;
+
+            // Check if nextQuestionId is "blocked" - this means we need to find the actual blocked question
+            if (progress?.nextQuestionId === 'blocked') {
+              // When nextQuestionId is "blocked", use the last answered question as the blocked question
+              // This is because the block occurs after answering a question
+              const sectionAnswers = apiSection.answers || [];
+              console.log(`🔍 Section ${i} answers:`, sectionAnswers);
+              
+              if (sectionAnswers.length > 0) {
+                // Use the last answered question as the blocked question
+                blockedQuestionIndex = sectionAnswers.length - 1;
+                console.log(`🔍 Section answers length: ${sectionAnswers.length}`);
+                console.log(`🔍 Section questions length: ${sectionQuestions.length}`);
+                console.log(`🔍 Calculated blockedQuestionIndex: ${blockedQuestionIndex}`);
+                console.log(`🔍 Section questions:`, sectionQuestions.map((q, idx) => ({ index: idx, id: q.id, text: q.data?.question })));
+                console.log(`🔍 Using last answered question as blocked: index ${blockedQuestionIndex} (question ${sectionAnswers[blockedQuestionIndex]?.questionId}) - answer: "${sectionAnswers[blockedQuestionIndex]?.answer}"`);
+              } else {
+                // Fallback: use the last question in the section
+                blockedQuestionIndex = sectionQuestions.length - 1;
+                console.log(`🔍 No answered questions found, using last question as blocked: index ${blockedQuestionIndex}`);
+              }
+            } else {
+              // Fallback: Look for the question that has referral text
+              for (let qIndex = 0; qIndex < sectionQuestions.length; qIndex++) {
+                const question = sectionQuestions[qIndex];
+                const answer = answers[question.id];
+                
+                if (answer && doesQuestionLeadToReferral(question.id, answer)) {
+                  blockedQuestionIndex = qIndex;
+                  console.log(`🔍 Found blocked question at index ${qIndex}: ${question.id} with answer "${answer}"`);
+                  break;
+                }
+              }
+            }
+
+            targetQuestionIndex = blockedQuestionIndex;
+            foundTarget = true;
+            console.log(`🎯 Found blocked section target: Section ${targetSectionIndex}, Question ${targetQuestionIndex + 1} (blocked - edit mode)`);
+            console.log(`🛑 BREAKING LOOP - Found first blocked section at index ${i}`);
+            console.log(`🎯 foundTarget set to: ${foundTarget}`);
+            break; // Always break on first blocked section found
+          }
+        }
+        console.log(`🔍 Edit mode completed. foundTarget: ${foundTarget}, targetSectionIndex: ${targetSectionIndex}, targetQuestionIndex: ${targetQuestionIndex}`);
+      }
+
+      // If no blocked section found in edit mode, or not in edit mode, use normal flow
+      if (!foundTarget) {
+        console.log(`🔍 Normal flow: Checking sections in order (foundTarget: ${foundTarget})`);
+        
+        // Loop through each section's progress to find nextQuestionId
+        for (let i = 0; i < apiSections.length; i++) {
+          const apiSection = apiSections[i];
+          const progress = apiSection.progress;
+
+          console.log(`🔍 Section ${i} (${apiSection.sectionName}):`, {
+            status: progress?.status,
+            nextQuestionId: progress?.nextQuestionId,
+            currentQuestionIndex: progress?.currentQuestionIndex,
+            answeredQuestions: progress?.answeredQuestionsInSection,
+            totalQuestions: progress?.totalQuestionsInSection
+          });
+
+          // Check if section is completed
+          if (progress?.status === 'completed') {
+            console.log(`⏭️ Section ${i} is completed, checking next section`);
+            continue;
+          }
+
+          // Check if section is blocked - if so, land on the blocked question
+          if (progress?.status === 'blocked' && progress?.nextQuestionId === 'blocked') {
+            console.log(`🚫 NORMAL FLOW: Section ${i} is blocked, landing on blocked question (foundTarget was: ${foundTarget})`);
+            targetSectionIndex = i;
+
+            // For blocked sections, find the question that caused the block
+            // We need to find the question with referral text in this section
+            const sectionQuestions = getQuestionsForSection(`template-section-${i}`);
+            let blockedQuestionIndex = 0;
+
+            // Look for the question that has referral text
+            for (let qIndex = 0; qIndex < sectionQuestions.length; qIndex++) {
+              const question = sectionQuestions[qIndex];
+              const answer = answers[question.id];
+              
+              if (answer && doesQuestionLeadToReferral(question.id, answer)) {
+                blockedQuestionIndex = qIndex;
+                console.log(`🔍 Found blocked question at index ${qIndex}: ${question.id} with answer "${answer}"`);
+                break;
+              }
+            }
+
+            targetQuestionIndex = blockedQuestionIndex;
+            foundTarget = true;
+            console.log(`🎯 Found blocked section target: Section ${targetSectionIndex}, Question ${targetQuestionIndex + 1} (blocked)`);
+            break;
+          }
+
+          // Check if we have a nextQuestionId value (not "completed" or "blocked")
+          if (progress?.nextQuestionId &&
+              progress.nextQuestionId !== 'completed' &&
+              progress.nextQuestionId !== 'blocked') {
+
+            targetSectionIndex = i;
+
+            // Convert nextQuestionId to question index
+            // We need to find the actual question in the section, not just subtract 1
+            const sectionQuestions = getQuestionsForSection(`template-section-${i}`);
+            console.log(`🔍 Section ${i} has ${sectionQuestions.length} questions:`, sectionQuestions.map((q, idx) => `Q${idx + 1}: ${q.id}`));
+            
+            if (typeof progress.nextQuestionId === 'number') {
+              // Find the question with this number in the section
+              const questionIndex = sectionQuestions.findIndex(q => {
+                const questionNumber = parseInt(q.id.replace(/^template-\d+-/, ''));
+                return questionNumber === progress.nextQuestionId;
+              });
+              targetQuestionIndex = questionIndex >= 0 ? questionIndex : 0;
+              console.log(`🔍 Found question ${progress.nextQuestionId} at index ${questionIndex} in section`);
+            } else if (typeof progress.nextQuestionId === 'string') {
+              // Try to parse as number first
+              const questionNum = parseInt(progress.nextQuestionId);
+              if (!isNaN(questionNum)) {
+                // Find the question with this number in the section
+                const questionIndex = sectionQuestions.findIndex(q => {
+                  const questionNumber = parseInt(q.id.replace(/^template-\d+-/, ''));
+                  return questionNumber === questionNum;
+                });
+                targetQuestionIndex = questionIndex >= 0 ? questionIndex : 0;
+                console.log(`🔍 Found question ${questionNum} at index ${questionIndex} in section`);
+              } else {
+                // If it's a question ID, try to find its index in the section
+                const questionIndex = sectionQuestions.findIndex(q =>
+                  q.id === progress.nextQuestionId ||
+                  q.id.includes(progress.nextQuestionId)
+                );
+                targetQuestionIndex = questionIndex >= 0 ? questionIndex : 0;
+                console.log(`🔍 Found question ID ${progress.nextQuestionId} at index ${questionIndex} in section`);
+              }
+            }
+            
+            // Ensure targetQuestionIndex is within bounds
+            if (targetQuestionIndex >= sectionQuestions.length) {
+              console.log(`⚠️ Target question index ${targetQuestionIndex} is out of bounds (max: ${sectionQuestions.length - 1}), using last question`);
+              targetQuestionIndex = sectionQuestions.length - 1;
+            }
+
+            foundTarget = true;
+            console.log(`🎯 Found target from API: Section ${targetSectionIndex}, Question ${targetQuestionIndex + 1} (nextQuestionId: ${progress.nextQuestionId})`);
+            console.log(`🔍 DEBUG: nextQuestionId="${progress.nextQuestionId}" -> targetQuestionIndex=${targetQuestionIndex} (0-based) -> Question ${targetQuestionIndex + 1} (1-based)`);
+            break;
+          }
+        }
+      }
+
+      // If no specific nextQuestionId found, fall back to first incomplete section
+      if (!foundTarget) {
+        for (let i = 0; i < apiSections.length; i++) {
+          const apiSection = apiSections[i];
+          const progress = apiSection.progress;
+
+          if (progress?.status !== 'completed') {
+            targetSectionIndex = i;
+            targetQuestionIndex = progress?.currentQuestionIndex || 0;
+            foundTarget = true;
+            console.log(`🎯 Fallback target: Section ${targetSectionIndex}, Question ${targetQuestionIndex} (currentQuestionIndex)`);
+            break;
+          }
+        }
+      }
+
+      console.log(`🎯 Auto-navigation target [${callId}]: Section ${targetSectionIndex}, Question ${targetQuestionIndex} (0-based) = Question ${targetQuestionIndex + 1} (1-based)`);
+      console.log(`🎯 Current position [${callId}]: Section ${currentSectionIndex}, Question ${currentQuestionInSection} (0-based) = Question ${currentQuestionInSection + 1} (1-based)`);
+
+      // Update navigation if target is different from current position
+      if (foundTarget) {
+        console.log(`🎯 FINAL NAVIGATION [${callId}]: Section ${targetSectionIndex}, Question ${targetQuestionIndex} (foundTarget: ${foundTarget})`);
+        console.log(`🎯 Current position before navigation [${callId}]: Section ${currentSectionIndex}, Question ${currentQuestionInSection}`);
+        
+        if (targetSectionIndex !== currentSectionIndex) {
+          console.log(`📍 Navigating to section ${targetSectionIndex} (current: ${currentSectionIndex}) [${callId}]`);
+          setCurrentSectionIndex(targetSectionIndex);
+        }
+        if (targetQuestionIndex !== currentQuestionInSection) {
+          console.log(`📍 Navigating to question ${targetQuestionIndex} (current: ${currentQuestionInSection}) [${callId}]`);
+          console.log(`📍 DEBUG: targetQuestionIndex=${targetQuestionIndex}, currentQuestionInSection=${currentQuestionInSection}`);
+          setCurrentQuestionInSection(targetQuestionIndex);
+        }
+
+        console.log(`✅ Auto-navigation completed [${callId}]. Final position: Section ${targetSectionIndex}, Question ${targetQuestionIndex} (0-based) = Question ${targetQuestionIndex + 1} (1-based)`);
+        
+        // Reset the auto-navigation flag after a delay to allow normal section changes
+        setTimeout(() => {
+          autoNavigationAttempted.current = false;
+          console.log(`🔄 Auto-navigation flag reset - normal section changes can now reset question index`);
+        }, 2000);
+      } else {
+        console.log(`🚫 No valid navigation target found [${callId}]`);
+      }
+    };
+
+    // Run auto-navigation after a delay to ensure all data is loaded
+  const timer = setTimeout(autoNavigateUsingApiData, 1000);
+    return () => clearTimeout(timer);
+  }, [template, mounted, templatesData, sectionIndexParam, questionIndexParam, currentSectionIndex, currentQuestionInSection]);
+
+  // Manual trigger for testing (accessible from browser console)
+  useEffect(() => {
+    (window as any).triggerAutoNavigation = () => {
+      const manualCallId = Math.random().toString(36).substr(2, 9);
+      console.log(`🔧 MANUAL AUTO-NAVIGATION TRIGGER [${manualCallId}] using API data`);
+      setHasAutoNavigated(false);
+
+      if (!templatesData?.assessment?.sections) {
+        console.log('❌ No API assessment data available');
+        return;
+      }
+
+      const apiSections = templatesData.assessment.sections;
+      console.log(`🎯 Manual trigger: Checking ${apiSections.length} API sections`);
+
+      // First, check for blocked sections (priority in edit mode)
+      if (templatesData?.isEditing) {
+        console.log(`🔍 Manual trigger - Edit mode: Checking for blocked sections first`);
+        
+        // Loop through all sections to find the first blocked section
+        for (let i = 0; i < apiSections.length; i++) {
+          const apiSection = apiSections[i];
+          const progress = apiSection.progress;
+
+          console.log(`🔍 Section ${i} (${apiSection.sectionName}):`, {
+            status: progress?.status,
+            nextQuestionId: progress?.nextQuestionId,
+            currentQuestionIndex: progress?.currentQuestionIndex,
+            answeredQuestions: progress?.answeredQuestionsInSection,
+            totalQuestions: progress?.totalQuestionsInSection
+          });
+
+          // Check if section is blocked - prioritize this in edit mode
+          if (progress?.status === 'blocked' && progress?.nextQuestionId === 'blocked') {
+            console.log(`🚫 Section ${i} is blocked, landing on blocked question (edit mode priority)`);
+            
+            // For blocked sections, use the nextQuestionId to find the specific blocked question
+            const sectionQuestions = getQuestionsForSection(`template-section-${i}`);
+            let blockedQuestionIndex = 0;
+
+            // Check if nextQuestionId is "blocked" - this means we need to find the actual blocked question
+            if (progress?.nextQuestionId === 'blocked') {
+              // When nextQuestionId is "blocked", use the last answered question as the blocked question
+              // This is because the block occurs after answering a question
+              const sectionAnswers = apiSection.answers || [];
+              console.log(`🔍 Section ${i} answers:`, sectionAnswers);
+              
+              if (sectionAnswers.length > 0) {
+                // Use the last answered question as the blocked question
+                blockedQuestionIndex = sectionAnswers.length - 1;
+                console.log(`🔍 Section answers length: ${sectionAnswers.length}`);
+                console.log(`🔍 Section questions length: ${sectionQuestions.length}`);
+                console.log(`🔍 Calculated blockedQuestionIndex: ${blockedQuestionIndex}`);
+                console.log(`🔍 Section questions:`, sectionQuestions.map((q, idx) => ({ index: idx, id: q.id, text: q.data?.question })));
+                console.log(`🔍 Using last answered question as blocked: index ${blockedQuestionIndex} (question ${sectionAnswers[blockedQuestionIndex]?.questionId}) - answer: "${sectionAnswers[blockedQuestionIndex]?.answer}"`);
+              } else {
+                // Fallback: use the last question in the section
+                blockedQuestionIndex = sectionQuestions.length - 1;
+                console.log(`🔍 No answered questions found, using last question as blocked: index ${blockedQuestionIndex}`);
+              }
+            } else {
+              // Fallback: Look for the question that has referral text
+              for (let qIndex = 0; qIndex < sectionQuestions.length; qIndex++) {
+                const question = sectionQuestions[qIndex];
+                const answer = answers[question.id];
+                
+                if (answer && doesQuestionLeadToReferral(question.id, answer)) {
+                  blockedQuestionIndex = qIndex;
+                  console.log(`🔍 Found blocked question at index ${qIndex}: ${question.id} with answer "${answer}"`);
+                  break;
+                }
+              }
+            }
+
+            console.log(`🎯 Manual trigger should navigate to blocked Section ${i}, Question ${blockedQuestionIndex + 1} (edit mode)`);
+            setCurrentSectionIndex(i);
+            setCurrentQuestionInSection(blockedQuestionIndex);
+            return; // Always return on first blocked section found
+          }
+        }
+      }
+
+      // If no blocked section found in edit mode, or not in edit mode, use normal flow
+      for (let i = 0; i < apiSections.length; i++) {
+        const apiSection = apiSections[i];
+        const progress = apiSection.progress;
+
+        console.log(`🔍 Section ${i} (${apiSection.sectionName}):`, {
+          status: progress?.status,
+          nextQuestionId: progress?.nextQuestionId,
+          currentQuestionIndex: progress?.currentQuestionIndex,
+          answeredQuestions: progress?.answeredQuestionsInSection,
+          totalQuestions: progress?.totalQuestionsInSection
+        });
+
+        if (progress?.status === 'completed') {
+          console.log(`⏭️ Section ${i} is completed, checking next section`);
+          continue;
+        }
+
+        // Check if section is blocked - if so, land on the blocked question
+        if (progress?.status === 'blocked' && progress?.nextQuestionId === 'blocked') {
+          console.log(`🚫 Section ${i} is blocked, landing on blocked question`);
+          
+          // For blocked sections, find the question that caused the block
+          const sectionQuestions = getQuestionsForSection(`template-section-${i}`);
+          let blockedQuestionIndex = 0;
+
+          // Look for the question that has referral text
+          for (let qIndex = 0; qIndex < sectionQuestions.length; qIndex++) {
+            const question = sectionQuestions[qIndex];
+            const answer = answers[question.id];
+            
+            if (answer && doesQuestionLeadToReferral(question.id, answer)) {
+              blockedQuestionIndex = qIndex;
+              console.log(`🔍 Found blocked question at index ${qIndex}: ${question.id} with answer "${answer}"`);
+              break;
+            }
+          }
+
+          console.log(`🎯 Manual trigger should navigate to blocked Section ${i}, Question ${blockedQuestionIndex + 1}`);
+          setCurrentSectionIndex(i);
+          setCurrentQuestionInSection(blockedQuestionIndex);
+          return;
+        }
+
+        if (progress?.nextQuestionId &&
+            progress.nextQuestionId !== 'completed' &&
+            progress.nextQuestionId !== 'blocked') {
+
+          let targetQuestionIndex = 0;
+          if (typeof progress.nextQuestionId === 'number') {
+            targetQuestionIndex = progress.nextQuestionId - 1;
+          } else if (typeof progress.nextQuestionId === 'string') {
+            const questionNum = parseInt(progress.nextQuestionId);
+            targetQuestionIndex = !isNaN(questionNum) ? questionNum - 1 : 0;
+          }
+
+          console.log(`🎯 Manual trigger should navigate to Section ${i}, Question ${targetQuestionIndex + 1} (nextQuestionId: ${progress.nextQuestionId})`);
+          setCurrentSectionIndex(i);
+          setCurrentQuestionInSection(targetQuestionIndex);
+          return;
+        }
+      }
+
+      console.log('🚫 No valid navigation target found in manual trigger');
+    };
+  }, [templatesData]);
+
+  if (!mounted) return null;
+
+  // Debug logging
+  console.log('🔄 Render state:', { loading, templatesData: !!templatesData, template: !!template });
+
+  // If we have templates data but no template yet, we're still processing
+  // if (loading || (templatesData && !template)) {
+  //   return (
+  //     <DashboardLayout>
+  //       <Box
+  //         sx={{
+  //           minHeight: "100vh",
+  //           display: "flex",
+  //           alignItems: "center",
+  //           justifyContent: "center",
+  //           backgroundColor: "#fafafa",
+  //         }}
+  //       >
+  //         <Card sx={{ p: 4, textAlign: "center", maxWidth: 400 }}>
+  //           <CardContent>
+  //             <Typography variant="h6" sx={{ mb: 2, color: "#6b7280" }}>
+  //               Loading Assessment...
+  //             </Typography>
+  //             <Typography variant="body2" sx={{ mb: 2, color: "#9ca3af" }}>
+  //               {templatesData ? 'Processing templates...' : 'Waiting for templates data...'}
+  //             </Typography>
+  //             <Typography variant="caption" sx={{ mb: 2, color: "#6b7280", display: 'block' }}>
+  //               Debug: mounted={mounted ? 'true' : 'false'}, isUserSet={isUserSet ? 'true' : 'false'}, hasTemplatesData={templatesData ? 'true' : 'false'}
+  //             </Typography>
+  //             <LinearProgress sx={{ mt: 2 }} />
+  //           </CardContent>
+  //         </Card>
+  //       </Box>
+  //     </DashboardLayout>
+  //   );
+  // }
+
+  // If we don't have templates data and we're not loading, redirect to assessment page
+  // if (!templatesData && !loading) {
+  //   console.log('❌ No templates data available, redirecting to assessment page');
+  //   router.push("/assessment");
+  //   return null;
+  // }
+
+  const questionNodes = getQuestionNodes();
+  const currentQuestion = questionNodes[currentQuestionIndex];
+  const progress = calculateWeightedProgress();
+
+  if (!currentQuestion) {
+    return (
+      <></>
+      // <DashboardLayout
+      // >
+      //   <Box
+      //     sx={{
+      //       minHeight: "100vh",
+      //       backgroundColor: "#fafafa",
+      //       display: "flex",
+      //       alignItems: "center",
+      //       justifyContent: "center",
+      //     }}
+      //   >
+      //     <Card sx={{ p: 4, textAlign: "center" }}>
+      //       <Typography variant="h6" color="error">
+      //         No questions found in this template
+      //       </Typography>
+      //       <Button onClick={() => router.push("/dashboard")} sx={{ mt: 2 }}>
+      //         Back to Dashboard
+      //       </Button>
+      //     </Card>
+      //   </Box>
+      // </DashboardLayout>
+    );
+  }
+
+  const sections = getSections();
+
+  return (
+    <DashboardLayout
+    >
+      <Box sx={{ height: "100%", backgroundColor: "#f8fafc", overflow: "auto" }}>
+        {/* Sticky Header */}
+        <Box sx={{ backgroundColor: "transparent", position: "sticky", top: 0, zIndex: 10 }}>
+          <Box sx={{ px: 0, pt: 0, pb: 1, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <Box>
+              <Typography variant="h5" fontWeight={600} fontFamily={"var(--font-inter), sans-serif"} sx={{ color: "#111827" }}>
+                {templatesData?.isEditing ? 'Edit Assessment' : 'New Assessment'}
+              </Typography>
+              <Typography variant="subtitle1" color="#6c757d" fontFamily={"var(--font-inter), sans-serif"}>
+                {/* {sections[currentSectionIndex]?.data?.sectionName || "Assessment"} - Started on{" "} */}
+                 {user?.facilityName || 'Medical Facility'} -Started on{" "}
+                {new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" })}
+              </Typography>
+            </Box>
+            <Chip
+              label={progress === 100 ? `Completed - ${progress}%` : `In Progress - ${progress}%`}
+              sx={{
+                backgroundColor: progress === 100 ? "#e8f5e8" : "#faf5e3",
+                color: progress === 100 ? "#2e7d32" : "#e9b825",
+                fontWeight: 700,
+                borderRadius: "8px",
+                px: 1.5,
+                height: 32,
+              }}
+            />
+          </Box>
+
+          <Box sx={{ px: 0, pb: 0 }}>
+            <LinearProgress
+              variant="determinate"
+              value={progress}
+              sx={{
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: "#e5e7eb",
+                "& .MuiLinearProgress-bar": { backgroundColor: "#3b82f6", borderRadius: 3 },
+              }}
+            />
+          </Box>
+        </Box>
+
+        <Box ref={questionsTopRef} />
+
+        <Card
+          variant="outlined"
+          sx={{
+            borderColor: "#e5e7eb",
+            borderRadius: 2,
+            boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+            mt: 2,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {/* Tabs header (unchanged) */}
+          <Box sx={{ px: 2, pt: 1.5, bgcolor: "#fff" }}>
+            <Tabs
+              value={currentSectionIndex}
+              onChange={(_, v) => handleSectionChange(v)}
+              variant="fullWidth"
+              TabIndicatorProps={{
+                sx: {
+                  height: 3,
+                  borderRadius: 2,
+                  backgroundColor: "#3a7de6" // Always blue for active tab
+                }
+              }}
+              sx={{
+                px: 0,
+                "& .MuiTabs-flexContainer": { width: "100%" },
+                "& .MuiTab-root": {
+                  minWidth: 0,
+                  flex: 1,
+                  width: "100%",
+                  textTransform: "none",
+                  fontWeight: 600,
+                  color: "#6b6b6b",
+                  minHeight: 44,
+                  "&.Mui-selected": {
+                    color: "#000000",
+                    backgroundColor: "#f5f9ff",
+                    borderRadius: "8px 8px 0 0",
+                    fontWeight: 700,
+                  },
+                },
+              }}
+            >
+              {sections.map((section: any, index: number) => {
+                const sectionStatus = getSectionCompletionStatus(section.id);
+                const isSelected = currentSectionIndex === index;
+                const isDisabled = isTabDisabled(index);
+
+                // Determine icon and color based on status
+                let iconComponent: React.ReactNode = null;
+                let textColor = "#6b6b6b"; // Default gray
+
+                if (isDisabled) {
+                  // Disabled tab styling with lock icon
+                  // iconComponent = <LockIcon sx={{ fontSize: 16, color: "#d1d5db" }} />;
+                  textColor = "#6b6b6b"; // Light gray for disabled
+                } else if (!isSelected) {
+                  switch (sectionStatus) {
+                    case 'completed':
+                      iconComponent = <DoneIcon sx={{ fontSize: 18, color: "#4cb054" }} />;
+                      textColor = "#4cb054";
+                      break;
+                    case 'blocked':
+                      iconComponent = <HourglassBottomIcon sx={{ fontSize: 18, color: "#e9b825" }} />;
+                      textColor = "#e9b825";
+                      break;
+                    case 'in-progress':
+                      iconComponent = <HourglassBottomIcon sx={{ fontSize: 18, color: "#e9b825" }} />;
+                      textColor = "#e9b825";
+                      break;
+                    case 'not-started':
+                    default:
+                      // No icon for not-started sections, keep default gray color
+                      iconComponent = null;
+                      textColor = "#6b6b6b";
+                      break;
+                  }
+                }
+
+                return (
+                  <Tab
+                    key={section.id}
+                    disableRipple
+                    disabled={isDisabled}
+                    label={
+                      <Box sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        opacity: isDisabled ? 0.5 : 1,
+                        cursor: isDisabled ? 'not-allowed' : 'pointer'
+                      }}>
+                        {/* Show icon for non-selected tabs (including disabled tabs) */}
+                        {!isSelected && iconComponent}
+                        <Typography
+                          sx={{
+                            fontSize: '14px',
+                            fontWeight: isSelected ? 700 : 600,
+                            color: isSelected ? "#000000" : textColor,
+                            textTransform: 'none',
+                          }}
+                        >
+                          {section.data.sectionName}
+                        </Typography>
+                      </Box>
+                    }
+                  />
+                );
+              })}
+            </Tabs>
+          </Box>
+
+          <Divider sx={{ borderColor: "#e5e7eb" }} />
+
+          <CardContent
+            sx={{
+              p: 2.5,
+              pt: 3,
+              maxHeight: "calc(100vh - 320px)",
+              overflowY: "auto",
+              pr: 2,
+              ml: 3,
+              "&::-webkit-scrollbar": { width: 8 },
+              "&::-webkit-scrollbar-track": { backgroundColor: "#e5e7eb", borderRadius: 8 },
+              "&::-webkit-scrollbar-thumb": { backgroundColor: "#3b82f6", borderRadius: 8 },
+              scrollbarColor: "#3b82f6 #e5e7eb",
+            }}
+          >
+            {/* Question Stepper */}
+            {/* <QuestionStepper
+              totalQuestions={getCurrentSectionQuestions().length}
+              currentQuestionIndex={currentQuestionInSection}
+              answeredQuestions={getAnsweredQuestionsInCurrentSection()}
+              sectionName={sections[currentSectionIndex]?.data?.sectionName || ""}
+              onQuestionClick={handleQuestionClick}
+            /> */}
+
+            {/* Current Question Display */}
+            {(() => {
+              const currentQuestion = getCurrentQuestion();
+              if (!currentQuestion) {
+                return (
+                  <Box sx={{ textAlign: 'center', py: 4 }}>
+                    <Typography variant="h6" color="text.secondary">
+                      No questions available in this section
+                    </Typography>
+                  </Box>
+                );
+              }
+
+              const endActionMsg = getEndActionForAnswer(currentQuestion.id, answers[currentQuestion.id]);
+
+              return (
+                <Box sx={{ my: 6 }}>
+                  <Typography
+                    sx={{
+                      fontSize: "18px",
+                      fontWeight: 600,
+                      mb: 2,
+                      mt: 2,
+                      color: "#1f2937",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {currentQuestionInSection + 1}. {currentQuestion.data.question}
+                    {currentQuestion.data.isRequired && <span style={{ color: "#ef4444" }}> *</span>}
+                  </Typography>
+
+                  <QuestionInput
+                    question={currentQuestion}
+                    answer={answers[currentQuestion.id]}
+                    onAnswerChange={(answer) => handleAnswerChange(currentQuestion.id, answer)}
+                  />
+
+                  {endActionMsg && (
+                    <Alert severity="info" sx={{ mt: 3 }}>
+                      {endActionMsg}
+                    </Alert>
+                  )}
+                </Box>
+              );
+            })()}
+          </CardContent>
+
+          <Divider sx={{ borderColor: "#e5e7eb" }} />
+
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              px: 2.5,
+              py: 2,
+              bgcolor: "#fff",
+            }}
+          >
+            {/* Left side - Previous Question button */}
+            <Button
+              onClick={handlePreviousQuestion}
+              disabled={isFirstQuestion()}
+              variant="outlined"
+              startIcon={<ArrowBackIosNewIcon />}
+              sx={{
+                textTransform: "none",
+                fontWeight: 700,
+                borderRadius: "10px",
+                borderWidth: 2,
+                px: 2.5,
+                py: 1,
+                borderColor: "#e5e7eb",
+                color: "#6b7280",
+                "&:hover": { borderColor: "#d1d5db", background: "#f9fafb" },
+                "&.Mui-disabled": { borderColor: "#e5e7eb", color: "#d1d5db" },
+              }}
+            >
+              Previous Question
+            </Button>
+
+            {/* Right side - Save Draft and Next/Review buttons */}
+            <Box sx={{ display: "flex", gap: 2 }}>
+              <Button
+                onClick={handleSaveDraft}
+                variant="outlined"
+                startIcon={<SaveOutlinedIcon />}
+                sx={{
+                  textTransform: "none",
+                  fontWeight: 700,
+                  borderRadius: "10px",
+                  borderWidth: 2,
+                  px: 2.5,
+                  py: 1,
+                  color: "#3b82f6",
+                  borderColor: "#3b82f6",
+                  "&:hover": { borderColor: "#2f6fe0", background: "rgba(59,130,246,0.06)" },
+                }}
+              >
+                {/* {templatesData?.isEditing ? 'Save Changes' : 'Save as Draft'} */}
+                Save Draft
+              </Button>
+
+              {isLastQuestion() ? (
+                <Button
+                  onClick={handleSubmitAssessment}
+                  disabled={!isCurrentQuestionAnswered()}
+                  variant="contained"
+                  endIcon={<VisibilityIcon />}
+                  sx={{
+                    textTransform: "none",
+                    fontWeight: 700,
+                    borderRadius: "10px",
+                    px: 2.8,
+                    py: 1.1,
+                    background: !isCurrentQuestionAnswered() ? "#d1d5db" : "#3b82f6",
+                    color: !isCurrentQuestionAnswered() ? "#9ca3af" : "#ffffff",
+                    boxShadow: !isCurrentQuestionAnswered() ? "none" : "0 2px 8px rgba(59,130,246,0.25)",
+                    "&:hover": {
+                      background: !isCurrentQuestionAnswered() ? "#d1d5db" : "#2563eb",
+                      boxShadow: !isCurrentQuestionAnswered() ? "none" : "0 4px 12px rgba(59,130,246,0.35)"
+                    },
+                    "&.Mui-disabled": {
+                      background: "#d1d5db",
+                      color: "#9ca3af"
+                    }
+                  }}
+                >
+                  {/* {templatesData?.isEditing ? 'Update Assessment' : 'Review'} */}
+                  Review
+                </Button>
+              ) : isLastQuestionInSection() ? (
+                <Button
+                  onClick={handleNextSection}
+                  disabled={!isCurrentQuestionAnswered()}
+                  variant="contained"
+                  endIcon={<ArrowForwardIosIcon />}
+                  sx={{
+                    textTransform: "none",
+                    fontWeight: 700,
+                    borderRadius: "10px",
+                    px: 2.8,
+                    py: 1.1,
+                    background: !isCurrentQuestionAnswered() ? "#d1d5db" : "#3b82f6",
+                    color: !isCurrentQuestionAnswered() ? "#9ca3af" : "#ffffff",
+                    boxShadow: !isCurrentQuestionAnswered() ? "none" : "0 2px 8px rgba(59,130,246,0.25)",
+                    "&:hover": {
+                      background: !isCurrentQuestionAnswered() ? "#d1d5db" : "#2563eb",
+                      boxShadow: !isCurrentQuestionAnswered() ? "none" : "0 4px 12px rgba(59,130,246,0.35)"
+                    },
+                    "&.Mui-disabled": {
+                      background: "#d1d5db",
+                      color: "#9ca3af"
+                    }
+                  }}
+                >
+                  Next Section
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleNextQuestion}
+                  disabled={!isCurrentQuestionAnswered()}
+                  variant="contained"
+                  endIcon={<ArrowForwardIosIcon />}
+                  sx={{
+                    textTransform: "none",
+                    fontWeight: 700,
+                    borderRadius: "10px",
+                    px: 2.8,
+                    py: 1.1,
+                    background: !isCurrentQuestionAnswered() ? "#d1d5db" : "#3b82f6",
+                    color: !isCurrentQuestionAnswered() ? "#9ca3af" : "#ffffff",
+                    boxShadow: !isCurrentQuestionAnswered() ? "none" : "0 2px 8px rgba(59,130,246,0.25)",
+                    "&:hover": {
+                      background: !isCurrentQuestionAnswered() ? "#d1d5db" : "#2563eb",
+                      boxShadow: !isCurrentQuestionAnswered() ? "none" : "0 4px 12px rgba(59,130,246,0.35)"
+                    },
+                    "&.Mui-disabled": {
+                      background: "#d1d5db",
+                      color: "#9ca3af"
+                    }
+                  }}
+                >
+                  Next Question
+                </Button>
+              )}
+            </Box>
+          </Box>
+        </Card>
+      </Box>
+    </DashboardLayout>
+  );
+};
+
+export default AssessmentPage;

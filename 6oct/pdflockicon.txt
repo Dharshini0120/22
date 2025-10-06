@@ -1,0 +1,95 @@
+src>comp>ass>PdfLockIcon
+
+import React from 'react';
+import { Box, Tooltip } from '@mui/material';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import LockIcon from '@mui/icons-material/Lock';
+import LockOpenIcon from '@mui/icons-material/LockOpen';
+
+interface PdfLockIconProps {
+  isUnlocked: boolean;
+  onClick?: () => void;
+  size?: number;
+  style?: React.CSSProperties;
+}
+
+const PdfLockIcon: React.FC<PdfLockIconProps> = ({ 
+  isUnlocked, 
+  onClick, 
+  size = 25, 
+  style = {} 
+}) => {
+  const iconColor = isUnlocked ? '#18cf43ff' : '#6b7280'; // Green for unlocked, gray for locked
+  const lockColor = isUnlocked ? '#18cf43ff' : '#6b7280';
+  
+//   const tooltipTitle = isUnlocked 
+//     ? "Show download or email report pop up" 
+//     : "Report available after payment";
+const tooltipTitle = "Paid Report";
+
+
+
+  return (
+    <Tooltip title={tooltipTitle} arrow>
+      <Box
+        onClick={onClick}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          cursor: onClick ? 'pointer' : 'default',
+          position: 'relative',
+          ...style
+        }}
+      >
+        {/* PDF Icon */}
+        <PictureAsPdfIcon 
+          sx={{ 
+            fontSize: size, 
+            color: iconColor,
+            position: 'relative'
+          }} 
+        />
+        
+        {/* Lock Icon Overlay */}
+        <Box
+          sx={{
+            position: 'absolute',
+            top: -8,
+            right: -10,
+            backgroundColor: 'white',
+            borderRadius: '50%',
+            width: 16,
+            height: 16,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
+          }}
+        >
+          {isUnlocked ? (
+            <LockOpenIcon 
+              sx={{ 
+                fontSize: 12, 
+                color: lockColor 
+              }} 
+            />
+          ) : (
+            <LockIcon 
+              sx={{ 
+                fontSize: 12, 
+                color: lockColor 
+              }} 
+            />
+          )}
+        </Box>
+      </Box>
+    </Tooltip>
+  );
+};
+
+export default PdfLockIcon;
+
+
+
+
+

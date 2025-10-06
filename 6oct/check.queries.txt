@@ -1,0 +1,139 @@
+import { gql } from '@apollo/client';
+
+// GraphQL query to get Stripe public key
+export const GET_PUBLIC_KEY = gql`
+  query GetPublicKey {
+    getPublicKey {
+      status
+      message
+      statusCode
+      data {
+        publishableKey
+      }
+      error
+    }
+  }
+`;
+
+// GraphQL mutation to create setup intent
+export const CREATE_SETUP_INTENT = gql`
+  mutation CreateSetupIntent {
+    createSetupIntent {
+      status
+      message
+      statusCode
+      data {
+        id
+        client_secret
+        status
+        customer
+      }
+      error
+    }
+  }
+`;
+
+// GraphQL query to list payment methods
+export const LIST_PAYMENT_METHODS = gql`
+  query ListPaymentMethods {
+    listPaymentMethods(limit:3) {
+      status
+      message
+      statusCode
+      data {
+        paymentMethods {
+          id
+          type
+          card {
+            brand
+            last4
+            expMonth
+            expYear
+            funding
+          }
+          created
+        }
+        totalCount
+      }
+      error
+    }
+  }
+`;
+
+// GraphQL mutation to save payment method
+export const SAVE_PAYMENT_METHOD = gql`
+  mutation SavePaymentMethod($input: SavePaymentMethodInput!) {
+    savePaymentMethod(input: $input) {
+      status
+      message
+      statusCode
+      data {
+        id
+        userId
+        stripePaymentMethodId
+        type
+        card {
+          brand
+          last4
+          expMonth
+          expYear
+          funding
+          country
+        }
+        created
+        customer
+        isDefault
+        isActive
+        createdAt
+        updatedAt
+      }
+      error
+    }
+  }
+`;
+
+// GraphQL mutation to create payment intent
+export const CREATE_PAYMENT_INTENT = gql`
+  mutation CreatePaymentIntent($input: CreatePaymentIntentInput!) {
+    createPaymentIntent(input: $input) {
+      status
+      message
+      statusCode
+      data {
+        id
+        client_secret
+        amount
+        currency
+        status
+        customer
+      }
+      error
+    }
+  }
+`;
+
+// GraphQL query to get payment method details
+export const GET_PAYMENT_METHOD = gql`
+  query GetPaymentMethod($input: GetPaymentMethodInput!) {
+    getPaymentMethod(input: $input) {
+      status
+      message
+      statusCode
+      data {
+        id
+        type
+        card {
+          brand
+          last4
+          expMonth
+          expYear
+          funding
+          country
+        }
+        created
+        customer
+      }
+      error
+    }
+  }
+`;

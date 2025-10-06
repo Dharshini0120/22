@@ -1,0 +1,51 @@
+src>store>assessmemtSlice
+
+import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+
+interface AssessmentMetadata {
+  assessmentId: string;
+  assessmentName: string;
+}
+
+interface AssessmentState {
+  paymentMetadata: AssessmentMetadata | null;
+  loading: boolean;
+  error: string | null;
+}
+
+const initialState: AssessmentState = {
+  paymentMetadata: null,
+  loading: false,
+  error: null,
+};
+
+const assessmentSlice = createSlice({
+  name: 'assessment',
+  initialState,
+  reducers: {
+    setPaymentMetadata: (state, action: PayloadAction<AssessmentMetadata>) => {
+      state.paymentMetadata = action.payload;
+      state.error = null;
+    },
+    clearPaymentMetadata: (state) => {
+      state.paymentMetadata = null;
+      state.error = null;
+    },
+    setLoading: (state, action: PayloadAction<boolean>) => {
+      state.loading = action.payload;
+    },
+    setError: (state, action: PayloadAction<string | null>) => {
+      state.error = action.payload;
+      state.loading = false;
+    },
+  },
+});
+
+export const { 
+  setPaymentMetadata, 
+  clearPaymentMetadata, 
+  setLoading, 
+  setError 
+} = assessmentSlice.actions;
+
+export default assessmentSlice.reducer;

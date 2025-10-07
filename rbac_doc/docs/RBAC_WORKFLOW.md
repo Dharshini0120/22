@@ -1,0 +1,565 @@
+# RBAC (Role-Based Access Control) Workflow Documentation
+
+## Overview
+This project implements a comprehensive Role-Based Access Control system that manages user permissions across different modules and features. The RBAC system is built using Redux for state management, GraphQL for API communication, and session storage for persistence.
+
+## Architecture Components
+
+### 1. Core Components
+- **Redux Store**: Manages role data and authentication state
+- **GraphQL APIs**: Handle role operations and permission management
+- **Session Storage**: Persists authentication and role data
+- **Route Guards**: Protect routes based on authentication and permissions
+- **Permission Checks**: Component-level permission validation
+
+### 2. Data Structure
+
+#### Role Data Structure
+```typescript
+interface RoleData {
+  _id: string;
+  roleName: string;
+  roleslug: string;
+  modules: Module[];
+  createdAt: string;
+  updatedAt: string;
+  __v: number;
+  description?: string;
+}
+
+interface Module {
+  slug: string;
+  name: string;
+  permissions: Permission;
+}
+
+interface Permission {
+  create: boolean;
+  view: boolean;
+  update: boolean;
+  delete: boolean;
+}
+```
+
+## RBAC Workflow
+
+### Phase 1: Authentication & Role Assignment
+
+#### 1.1 User Sign-In Process
+```typescript
+// Location: libs/shared-ui/src/components/Auth/signin/page.tsx
+const handleSignIn = async () => {
+  const { data } = await signIn({
+    variables: { input: { email, password } }
+  });
+  
+  if (data?.signIn?.status) {
+    // Store auth credentials
+    dispatch(setCredentials({
+      token: data.signIn.data.token,
+      user: data.signIn.data.user
+    }));
+    
+    // Store role data
+    dispatch(setRoleData(data.signIn.data.user.role));
+    
+    // Redirect based on portal
+    router.push('/dashboard');
+  }
+};
+```
+
+#### 1.2 Role Data Storage
+```typescript
+// Location: apps/admin-portal/src/store/roleSlice.ts
+const roleSlice = createSlice({
+  name: 'role',
+  initialState: {
+    roleData: null,
+    loading: false,
+    error: null,
+  },
+  reducers: {
+    setRoleData: (state, action) => {
+      state.roleData = action.payload;
+      // Persist to session storage
+      sessionStorage.setItem('roleData', JSON.stringify(action.payload));
+    },
+    clearRoleData: (state) => {
+      state.roleData = null;
+      sessionStorage.removeItem('roleData');
+    }
+  }
+});
+```
+
+### Phase 2: Route Protection
+
+#### 2.1 Route Guard Implementation
+```typescript
+// Location: libs/shared-utils/src/components/RouteGuard.tsx
+export const RouteGuard = ({ children, portal, requireAuth = true }) => {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  useEffect(() => {
+    const authenticated = sessionAuthStorage.isAuthenticated(portal);
+    setIsAuthenticated(authenticated);
+    
+    if (requireAuth && !authenticated) {
+      router.replace('/auth/signin');
+    } else if (!requireAuth && authenticated) {
+      router.replace('/dashboard');
+    }
+  }, []);
+
+  if (requireAuth && !isAuthenticated) return null;
+  return <>{children}</>;
+};
+```
+
+#### 2.2 Navigation Based on Role
+```typescript
+// Location: apps/admin-portal/src/components/layout/DashboardLayout.tsx
+const getNavigationItemsByRole = (role: string) => {
+  switch (role) {
+    case 'superadmin':
+      return [
+        allNavigationItems.dashboard,
+        allNavigationItems.adminUsers,
+        allNavigationItems.hospitalUsers,
+        allNavigationItems.assessment,
+        allNavigationItems.templates,
+        allNavigationItems.facilityService,
+        allNavigationItems.roleAccess,
+        allNavigationItems.settings,
+      ];
+    case 'admin':
+      return [
+        allNavigationItems.dashboard,
+        allNavigationItems.hospitalUsers,
+        allNavigationItems.assessment,
+        allNavigationItems.facilityService,
+        allNavigationItems.templates,
+        allNavigationItems.settings,
+      ];
+    default:
+      return [allNavigationItems.dashboard];
+  }
+};
+```
+
+### Phase 3: Permission-Based Feature Access
+
+#### 3.1 Component-Level Permission Checks
+```typescript
+// Location: apps/admin-portal/src/app/assessment/page.tsx
+const permissions = useMemo(() => {
+  if (!roleData) {
+    return { canCreate: false, canUpdate: false, canDelete: false, isAdmin: false };
+  }
+
+  const roleName = roleData.roleName?.toLowerCase();
+  const isAdmin = roleName === 'admin' || roleName === 'super admin';
+
+  // Find Assessment module permissions
+  const assessmentModule = roleData.modules?.find((module: any) => 
+    module.name === 'Assessment Records'
+  );
+
+  if (!assessmentModule) {
+    return { canCreate: false, canUpdate: false, canDelete: false, isAdmin };
+  }
+
+  return {
+    canCreate: assessmentModule.permissions?.create || false,
+    canUpdate: assessmentModule.permissions?.update || false,
+    canDelete: assessmentModule.permissions?.delete || false,
+    isAdmin
+  };
+}, [roleData]);
+
+// Usage in component
+{permissions.canCreate && (
+  <Button onClick={handleNewAssessment}>
+    New Assessment
+  </Button>
+)}
+```
+
+#### 3.2 Conditional UI Rendering
+```typescript
+// Example: Show/hide buttons based on permissions
+const renderActionButtons = (assessment: Assessment) => (
+  <Box>
+    {permissions.canUpdate && (
+      <Button onClick={() => handleEdit(assessment.id)}>
+        Edit
+      </Button>
+    )}
+    {permissions.canDelete && (
+      <Button onClick={() => handleDelete(assessment.id)}>
+        Delete
+      </Button>
+    )}
+    <Button onClick={() => handleView(assessment.id)}>
+      View
+    </Button>
+  </Box>
+);
+```
+
+### Phase 4: Role & Permission Management
+
+#### 4.1 Role Management Interface
+```typescript
+// Location: apps/admin-portal/src/app/role-access/page.tsx
+
+// Fetch all roles
+const { data: rolesData } = useQuery(GET_ROLES, {
+  variables: { page: currentPage, limit }
+});
+
+// Create new role
+const handleCreateRole = async () => {
+  const { data } = await createRole({
+    variables: { 
+      input: { 
+        roleName: formName.trim(), 
+        description: formDesc.trim() 
+      } 
+    }
+  });
+  
+  if (data?.createRole?.status === "success") {
+    toast.success("Role created successfully");
+    await refetchAllData();
+  }
+};
+
+// Update role permissions
+const handleUpdatePermissions = async () => {
+  const modules = modulesList.map(moduleData => {
+    const moduleKey = moduleData.slug;
+    const modulePermissions = permissions[activeRoleId][moduleKey];
+    
+    return {
+      slug: moduleKey,
+      name: moduleData.name,
+      permissions: {
+        create: modulePermissions.create || false,
+        view: modulePermissions.read || false,
+        update: modulePermissions.update || false,
+        delete: modulePermissions.delete || false
+      }
+    };
+  });
+
+  const { data } = await updateRoleAndPermissions({
+    variables: {
+      input: {
+        roleId: activeRoleId,
+        modules: modules
+      }
+    }
+  });
+};
+```
+
+#### 4.2 Permission Rules Implementation
+```typescript
+// Permission dependency rules
+const togglePerm = (roleId: string, moduleKey: string, key: PermissionKey) => {
+  setPermissions((p) => {
+    const newValue = !p[roleId][moduleKey][key];
+    let updatedPermissions = { ...p[roleId][moduleKey], [key]: newValue };
+    
+    // Rule 1: If any update, delete, create checked then view automatically checked
+    if (newValue && (key === 'create' || key === 'update' || key === 'delete')) {
+      updatedPermissions.read = true;
+    }
+    
+    // Rule 2: If create checked, then rest all checked
+    if (key === 'create' && newValue) {
+      updatedPermissions = {
+        read: true,
+        create: true,
+        update: true,
+        delete: true
+      };
+    }
+    
+    return {
+      ...p,
+      [roleId]: {
+        ...p[roleId],
+        [moduleKey]: updatedPermissions,
+      },
+    };
+  });
+};
+```
+
+## GraphQL API Endpoints
+
+### Role Management APIs
+```graphql
+# Get all roles with pagination
+query GetRoles($page: Int, $limit: Int) {
+  listAllRoles(page: $page, limit: $limit) {
+    status
+    message
+    data {
+      _id
+      roleName
+      roleslug
+      description
+      modules {
+        slug
+        name
+        permissions {
+          create
+          view
+          update
+          delete
+        }
+      }
+    }
+    pagination {
+      currentPage
+      totalPages
+      totalItems
+      hasNextPage
+      hasPreviousPage
+    }
+  }
+}
+
+# Get role by ID
+query GetRoleById($roleId: String!) {
+  getRoleById(roleId: $roleId) {
+    status
+    message
+    data {
+      _id
+      roleName
+      description
+      modules {
+        slug
+        name
+        permissions {
+          create
+          view
+          update
+          delete
+        }
+      }
+    }
+  }
+}
+
+# Create new role
+mutation CreateRole($input: CreateRoleInput!) {
+  createRole(input: $input) {
+    status
+    message
+    statusCode
+    error
+  }
+}
+
+# Update role and permissions
+mutation UpdateRoleAndPermissions($input: UpdateRoleAndPermissionsInput!) {
+  updateRoleAndPermissions(input: $input) {
+    status
+    message
+    statusCode
+    error
+  }
+}
+
+# Delete role
+mutation DeleteRole($input: DeleteRoleInput!) {
+  deleteRole(input: $input) {
+    status
+    message
+    statusCode
+    error
+  }
+}
+```
+
+### Module Management APIs
+```graphql
+# Get all modules
+query GetModules($page: Int, $limit: Int) {
+  getModules(page: $page, limit: $limit) {
+    status
+    message
+    data {
+      slug
+      name
+      permissions {
+        create
+        view
+        update
+        delete
+      }
+    }
+    pagination {
+      currentPage
+      totalPages
+      totalItems
+    }
+  }
+}
+```
+
+## Implementation Examples
+
+### Example 1: User Portal Assessment Access
+```typescript
+// User can only view their own assessments
+// No create/update/delete permissions for regular users
+const UserAssessmentPage = () => {
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+  
+  // Users can only view assessments, no management actions
+  const canManageAssessments = roleData?.roleName === 'admin' || 
+                              roleData?.roleName === 'super admin';
+  
+  return (
+    <Box>
+      <AssessmentList readOnly={!canManageAssessments} />
+      {canManageAssessments && (
+        <Button onClick={handleNewAssessment}>
+          New Assessment
+        </Button>
+      )}
+    </Box>
+  );
+};
+```
+
+### Example 2: Admin Portal Role Management
+```typescript
+// Only Super Admin can access role management
+const RoleAccessPage = () => {
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+  
+  useEffect(() => {
+    if (roleData?.roleName?.toLowerCase() !== 'super admin') {
+      router.push('/dashboard');
+      toast.error('Access denied. Super Admin privileges required.');
+    }
+  }, [roleData]);
+  
+  return (
+    <DashboardLayout>
+      <RoleManagementInterface />
+    </DashboardLayout>
+  );
+};
+```
+
+### Example 3: Dynamic Navigation Menu
+```typescript
+const DashboardLayout = ({ children }) => {
+  const roleSlug = useSelector((state: RootState) => state.role.roleData?.roleslug);
+  
+  // Filter navigation items based on role
+  const navigationItems = useMemo(() => {
+    return allNavigationItems.filter(item => {
+      // Check if user has permission for this module
+      const hasPermission = roleData?.modules?.some(module => 
+        module.slug === item.moduleSlug && module.permissions.view
+      );
+      return hasPermission;
+    });
+  }, [roleData]);
+  
+  return (
+    <Box>
+      <Sidebar items={navigationItems} />
+      <MainContent>{children}</MainContent>
+    </Box>
+  );
+};
+```
+
+## Security Considerations
+
+### 1. Client-Side Security
+- **Session Storage**: Role data persists across browser sessions
+- **Route Guards**: Prevent unauthorized route access
+- **Component Guards**: Hide/show features based on permissions
+- **API Token**: JWT tokens for API authentication
+
+### 2. Server-Side Security
+- **JWT Validation**: All API calls require valid JWT tokens
+- **Role Verification**: Server validates user roles before processing requests
+- **Permission Checks**: Backend verifies specific permissions for each operation
+
+### 3. Best Practices
+```typescript
+// Always check permissions before rendering sensitive components
+const SecureComponent = ({ children, requiredPermission }) => {
+  const hasPermission = usePermission(requiredPermission);
+  
+  if (!hasPermission) {
+    return <AccessDeniedMessage />;
+  }
+  
+  return <>{children}</>;
+};
+
+// Use permission hooks for cleaner code
+const usePermission = (moduleSlug: string, action: string) => {
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+  
+  return useMemo(() => {
+    const module = roleData?.modules?.find(m => m.slug === moduleSlug);
+    return module?.permissions?.[action] || false;
+  }, [roleData, moduleSlug, action]);
+};
+```
+
+## Testing RBAC
+
+### Test Scenarios
+1. **Super Admin**: Full access to all modules and features
+2. **Admin**: Limited access, no role management
+3. **User**: Read-only access to personal data
+4. **Unauthenticated**: Redirected to login page
+
+### Test Cases
+```typescript
+describe('RBAC Tests', () => {
+  test('Super Admin can access role management', () => {
+    // Mock super admin role
+    // Navigate to /role-access
+    // Verify page loads successfully
+  });
+  
+  test('Regular user cannot access admin features', () => {
+    // Mock regular user role
+    // Attempt to access admin routes
+    // Verify access is denied
+  });
+  
+  test('Permissions are enforced in UI', () => {
+    // Mock user with limited permissions
+    // Check that restricted buttons are hidden
+  });
+});
+```
+
+## Conclusion
+
+This RBAC system provides:
+- **Granular Permissions**: Module-level CRUD permissions
+- **Role Hierarchy**: Different access levels (Super Admin > Admin > User)
+- **Dynamic UI**: Components adapt based on user permissions
+- **Secure Routes**: Protected navigation and API access
+- **Scalable Architecture**: Easy to add new roles and permissions
+
+The system ensures that users only see and can interact with features they have permission to access, providing a secure and user-friendly experience across both admin and user portals.

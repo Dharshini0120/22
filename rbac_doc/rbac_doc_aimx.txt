@@ -1,0 +1,612 @@
+# Complete RBAC Workflow Documentation with Examples
+
+## Table of Contents
+1. [RBAC Overview](#rbac-overview)
+2. [Project Architecture](#project-architecture)
+3. [Data Flow](#data-flow)
+4. [Step-by-Step Implementation](#step-by-step-implementation)
+5. [Component Examples](#component-examples)
+6. [Security Layers](#security-layers)
+
+---
+
+## RBAC Overview
+
+**Role-Based Access Control (RBAC)** is a security model where access to resources is controlled based on the roles assigned to users. In this project:
+
+- **Users** have **Roles** (e.g., SuperAdmin, Admin, User)
+- **Roles** have **Permissions** for different **Modules**
+- **Permissions** define what actions can be performed (Create, Read, Update, Delete)
+- **Modules** represent different parts of the application (Dashboard, Users, Settings)
+
+### RBAC Hierarchy
+```
+User → Role → Module Permissions → Specific Actions (CRUD)
+```
+
+---
+
+## Project Architecture
+
+### File Structure
+```
+src/
+├── hooks/
+│   └── useModulePermissions.ts     # Permission checking hook
+├── store/
+│   ├── userSlice.ts               # User state management
+│   └── UserPermissionSlice.ts     # Permission state management
+├── services/
+│   ├── authservice.ts             # Authentication API calls
+│   └── rolesapiService.ts         # Role/Permission API calls
+├── app/
+│   ├── (protected)/
+│   │   ├── layout.tsx             # Protected route wrapper
+│   │   └── role-access/           # Role management pages
+│   └── landingPage/
+│       └── page.tsx               # Login page
+├── middleware.ts                  # Route protection
+└── constants/
+    └── fieldtype.tsx              # Role constants
+```
+
+---
+
+## Data Flow
+
+### 1. Authentication Flow
+```mermaid
+graph TD
+    A[User Login] --> B[Enter Email]
+    B --> C[Send OTP]
+    C --> D[Verify OTP]
+    D --> E[Get User Details]
+    E --> F[Fetch Role Permissions]
+    F --> G[Store in Redux]
+    G --> H[Redirect to Dashboard]
+```
+
+### 2. Permission Check Flow
+```mermaid
+graph TD
+    A[User Accesses Page] --> B[Middleware Check Token]
+    B --> C[Protected Layout Check Permissions]
+    C --> D[Component Level Permission Check]
+    D --> E[Render UI Based on Permissions]
+```
+
+---
+
+## Step-by-Step Implementation
+
+### Step 1: Data Structures
+
+#### Permission Data Structure
+```typescript
+// From UserPermissionSlice.ts
+interface Permission {
+  permission_id: string;
+  permission_name: string; // "create", "read", "update", "delete"
+}
+
+interface Module {
+  module_id: string;
+  module_name: string;    // "Dashboard", "Users", "Settings"
+  permissions: Permission[];
+}
+
+interface AccessRight {
+  role_id: string;
+  role_name: string;      // "SuperAdmin", "Admin", "User"
+  modules: Module[];
+}
+```
+
+**Example Data:**
+```json
+{
+  "role_id": "123",
+  "role_name": "Admin",
+  "modules": [
+    {
+      "module_id": "1",
+      "module_name": "Users",
+      "permissions": [
+        {"permission_id": "1", "permission_name": "create"},
+        {"permission_id": "2", "permission_name": "read"},
+        {"permission_id": "3", "permission_name": "update"}
+      ]
+    }
+  ]
+}
+```
+
+### Step 2: Authentication Process
+
+#### Login Component (`landingPage/page.tsx`)
+```typescript
+const handleRedirectAfterLogin = async (userId: string, roleId: string) => {
+  // 1. Fetch user details
+  await dispatch(fetchUserById(userId));
+
+  // 2. Check if user is SuperAdmin
+  if (isSuperAdmin) {
+    router.push("/dashboard");
+    return;
+  }
+
+  // 3. Fetch user's role permissions
+  const Permission = await getPermissionData(roleId);
+  
+  // 4. Add default profile permissions
+  Permission.data.modules.push({
+    module_id: "profile-id",
+    module_name: "profile",
+    permissions: [
+      { permission_id: "read", permission_name: "read" },
+      { permission_id: "update", permission_name: "update" }
+    ]
+  });
+
+  // 5. Store permissions in Redux
+  await dispatch(setAccessRightsList(Permission.data));
+
+  // 6. Filter menu items based on permissions
+  const accessModules = Permission.data.modules.map(mod => mod.module_name);
+  const filteredMenuItems = AllMenuItems.filter(item =>
+    accessModules.includes(item.label)
+  );
+
+  // 7. Redirect to first available module
+  router.push(filteredMenuItems[0]?.path || "/dashboard");
+};
+```
+
+**What happens here:**
+1. User enters email → receives OTP
+2. After OTP verification → gets `userId` and `roleId`
+3. System fetches user details and role permissions from API
+4. Permissions are stored in Redux store
+5. Menu items are filtered based on available modules
+6. User is redirected to appropriate page
+
+### Step 3: Route Protection Layers
+
+#### Layer 1: Middleware (`middleware.ts`)
+```typescript
+export function middleware(request: NextRequest) {
+  const token = request.cookies.get("token")?.value || null;
+  const { pathname } = request.nextUrl;
+
+  // Block access to protected routes without token
+  if ((!token || token === "undefined") && 
+      protectedRoutes.some((route) => pathname.startsWith(route))) {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
+
+  // Prevent logged-in user from going back to login page
+  if (token && pathname === "/") {
+    return NextResponse.redirect(new URL("/organizations", request.url));
+  }
+
+  return NextResponse.next();
+}
+```
+
+**Purpose:** Basic authentication check - ensures user has a valid token
+
+#### Layer 2: Protected Layout (`(protected)/layout.tsx`)
+```typescript
+const moduleNameToPathMap: Record<string, string> = {
+  "Dashboard": "/dashboard",
+  "Datasets": "/datasets",
+  "Forms": "/forms",
+  "profile": "/profile",
+};
+
+const isAllowed = useMemo(() => {
+  // SuperAdmin has access to everything
+  if (isSuperAdmin) return true; 
+  if (!pathname || !permissions) return false;
+
+  return permissions.some(({ module_name, permissions: perms }) => {
+    const basePath = moduleNameToPathMap[module_name];
+    if (!basePath) return false;
+
+    // Check different path patterns
+    if (pathname === basePath) return true;
+    if (pathname.startsWith(`${basePath}/create`) && perms.includes("create")) return true;
+    if (pathname.startsWith(`${basePath}/edit`) && perms.includes("update")) return true;
+    if (pathname.startsWith(`${basePath}/view`) && perms.includes("read")) return true;
+    return false;
+  });
+}, [isSuperAdmin, pathname, permissions]);
+
+useEffect(() => {
+  if (!isAllowed) {
+    router.replace("/unauthorized");
+  }
+}, [isAllowed, router]);
+```
+
+**Purpose:** Detailed permission check - ensures user has specific permissions for the current route
+
+### Step 4: Permission Hook (`useModulePermissions.ts`)
+
+```typescript
+export function useModulePermissions(moduleName: string): ModulePermissions {
+  const accessRights = useAppSelector((state: RootState) => 
+    state?.accessRights?.accessRightsList?.modules
+  );
+  
+  return useMemo(() => {
+    // Find the specific module in user's permissions
+    const targetModule = accessRights?.find((mod) => 
+      mod?.module_name === moduleName
+    );
+    
+    // Extract permission names
+    const perms = targetModule?.permissions?.map((p) => p?.permission_name) || [];
+
+    // Return boolean flags for each permission type
+    return {
+      canCreate: perms.includes("create"),
+      canRead: perms.includes("read"),
+      canUpdate: perms.includes("update"),
+      canDelete: perms.includes("delete"), // ← Your selected code
+    };
+  }, [accessRights, moduleName]);
+}
+```
+
+**How it works:**
+1. Takes a module name (e.g., "Users", "Dashboard")
+2. Searches user's permissions for that module
+3. Returns boolean flags for each CRUD operation
+4. Components use these flags to show/hide features
+
+### Step 5: Component Usage Examples
+
+#### Example 1: Using Permissions in a Component
+```typescript
+// In datasets/page.tsx
+const DatasetsPage: React.FC = () => {
+  const {canRead} = useModulePermissions("Datasets");
+  
+  // Only render if user can read datasets
+  if (!canRead) {
+    return <div>Access Denied</div>;
+  }
+
+  return (
+    <div>
+      <h1>Datasets</h1>
+      {/* Dataset content */}
+    </div>
+  );
+};
+```
+
+#### Example 2: Conditional Button Rendering
+```typescript
+const UserManagement = () => {
+  const { canCreate, canUpdate, canDelete } = useModulePermissions("Users");
+
+  return (
+    <div>
+      <h1>User Management</h1>
+      
+      {/* Show create button only if user has create permission */}
+      {canCreate && (
+        <button onClick={handleCreateUser}>
+          Create New User
+        </button>
+      )}
+
+      <table>
+        {users.map(user => (
+          <tr key={user.id}>
+            <td>{user.name}</td>
+            <td>
+              {/* Show edit button only if user has update permission */}
+              {canUpdate && (
+                <button onClick={() => handleEdit(user.id)}>Edit</button>
+              )}
+              
+              {/* Show delete button only if user has delete permission */}
+              {canDelete && (
+                <button onClick={() => handleDelete(user.id)}>Delete</button>
+              )}
+            </td>
+          </tr>
+        ))}
+      </table>
+    </div>
+  );
+};
+```
+
+### Step 6: Navigation Filtering (`SideBar.tsx`)
+
+```typescript
+const Sidebar = () => {
+  const allMenuItems = [
+    { path: "/dashboard", icon: LayoutGrid, label: "Dashboard" },
+    { path: "/datasets", icon: Database, label: "Datasets" },
+    { path: "/forms", icon: FileText, label: "Forms" },
+    { path: "/project-dockets", icon: BookOpenText, label: "Project Results" },
+  ];
+
+  // Get user's accessible modules
+  const datasetListDetails = useAppSelector(
+    (state: RootState) => state?.accessRights?.accessRightsList?.modules
+  );
+
+  // Map module names to paths
+  const moduleNameToPathMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    allMenuItems.map((item) => {
+      map[item.label] = item.path;
+    });
+    return map;
+  }, [allMenuItems]);
+
+  // Get allowed paths based on user permissions
+  const allowedPaths = useMemo(() => {
+    return (datasetListDetails || [])
+      .map((item) => moduleNameToPathMap[item.module_name])
+      .filter(Boolean);
+  }, [datasetListDetails, moduleNameToPathMap]);
+
+  // Filter menu items
+  const filteredMenuItems = useMemo(() => {
+    if (isSuperAdmin) {
+      return allMenuItems; // SuperAdmin sees everything
+    }
+    return allMenuItems.filter((item) => allowedPaths.includes(item.path));
+  }, [isSuperAdmin, allowedPaths, allMenuItems]);
+
+  return (
+    <nav>
+      {filteredMenuItems.map((item) => (
+        <Link key={item.path} href={item.path}>
+          <div className={`nav-item ${isActive(item.path) ? 'active' : ''}`}>
+            <item.icon />
+            <span>{item.label}</span>
+          </div>
+        </Link>
+      ))}
+    </nav>
+  );
+};
+```
+
+**What happens:**
+1. All possible menu items are defined
+2. User's accessible modules are retrieved from Redux
+3. Menu items are filtered to show only accessible modules
+4. SuperAdmin sees all items, regular users see filtered items
+
+### Step 7: Role Management (`role-access/page.tsx`)
+
+```typescript
+const RoleAccessPage = () => {
+  const [selectedRole, setSelectedRole] = useState("select Role");
+  const [accessRights, setAccessRights] = useState([]);
+
+  // Fetch role permissions when role is selected
+  const fetchRolePermissions = async () => {
+    const selected = rolesListData.find((role) => role.name === selectedRole);
+    if (!selected) return;
+
+    try {
+      const res = await getPermissionData(selected.id);
+      const roleModules = res.data.modules;
+
+      // Update access rights based on role permissions
+      const updatedRights = accessRights.map((module) => {
+        const foundModule = roleModules.find((m) => m.module_id === module.id);
+        if (!foundModule) {
+          return {
+            ...module,
+            create: false,
+            read: false,
+            update: false,
+            delete: false,
+          };
+        }
+
+        const modulePermissions = foundModule.permissions.map((p) =>
+          p.permission_name.toLowerCase()
+        );
+
+        return {
+          ...module,
+          create: modulePermissions.includes("create"),
+          read: modulePermissions.includes("read"),
+          update: modulePermissions.includes("update"),
+          delete: modulePermissions.includes("delete"),
+        };
+      });
+
+      setAccessRights(updatedRights);
+    } catch (error) {
+      console.error("Error fetching role permission details:", error);
+    }
+  };
+
+  // Save permission changes
+  const handleSavePermission = async () => {
+    const finalPayload = {
+      role_id: roleId,
+      module_id: module_ids,
+      permission_id: permission_ids,
+    };
+
+    const existingPermissions = await getPermissionData(roleId);
+    const isFirstTime = !existingPermissions?.data?.modules?.length;
+
+    const res = isFirstTime
+      ? await addPermission(finalPayload)
+      : await updatePermissionData(finalPayload);
+
+    toast.success("Permissions saved successfully!");
+  };
+
+  return (
+    <div>
+      {/* Role selection dropdown */}
+      <select onChange={(e) => setSelectedRole(e.target.value)}>
+        {rolesListData.map(role => (
+          <option key={role.id} value={role.name}>{role.name}</option>
+        ))}
+      </select>
+
+      {/* Permission matrix */}
+      <table>
+        <thead>
+          <tr>
+            <th>Module</th>
+            <th>Create</th>
+            <th>Read</th>
+            <th>Update</th>
+            <th>Delete</th>
+          </tr>
+        </thead>
+        <tbody>
+          {accessRights.map((module, index) => (
+            <tr key={module.id}>
+              <td>{module.name}</td>
+              <td>
+                <Checkbox
+                  checked={module.create}
+                  onChange={() => handleCheckboxChange(index, 'create')}
+                />
+              </td>
+              <td>
+                <Checkbox
+                  checked={module.read}
+                  onChange={() => handleCheckboxChange(index, 'read')}
+                />
+              </td>
+              <td>
+                <Checkbox
+                  checked={module.update}
+                  onChange={() => handleCheckboxChange(index, 'update')}
+                />
+              </td>
+              <td>
+                <Checkbox
+                  checked={module.delete}
+                  onChange={() => handleCheckboxChange(index, 'delete')}
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <button onClick={handleSavePermission}>Save Permissions</button>
+    </div>
+  );
+};
+```
+
+---
+
+## Security Layers
+
+### 1. Token Management (`createApiClient.ts`)
+```typescript
+// Add token to all requests
+apiClient.interceptors.request.use(
+  (config) => {
+    const token = Cookies.get("token");
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  }
+);
+
+// Handle token refresh
+apiClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    if (error.response?.status === 401) {
+      // Try to refresh token
+      const refreshToken = Cookies.get("refresh_token");
+      if (refreshToken) {
+        try {
+          const newToken = await refreshTokenAPI(refreshToken);
+          Cookies.set("token", newToken);
+          // Retry original request
+          return apiClient(error.config);
+        } catch (refreshError) {
+          // Redirect to login
+          Router.push("/login");
+        }
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+```
+
+### 2. Logout Process
+```typescript
+const handleLogout = () => {
+  // Clear all cookies
+  document.cookie = "token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/";
+  document.cookie = "user_id=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/";
+  document.cookie = "refresh_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/";
+  
+  // Clear Redux state
+  dispatch(clearUserState());
+  dispatch(clearAccessRightsList());
+  
+  // Redirect to login
+  window.location.href = "/";
+};
+```
+
+---
+
+## Complete Workflow Example
+
+### Scenario: Admin User Accessing User Management
+
+1. **Login:**
+   ```
+   User enters email → OTP sent → OTP verified → 
+   User details fetched → Role permissions fetched → 
+   Stored in Redux → Redirected to dashboard
+   ```
+
+2. **Navigation:**
+   ```
+   Sidebar loads → Checks user permissions → 
+   Filters menu items → Shows only accessible modules
+   ```
+
+3. **Page Access:**
+   ```
+   User clicks "User Management" → 
+   Middleware checks token → 
+   Protected Layout checks permissions → 
+   Component renders with permission-based features
+   ```
+
+4. **Component Rendering:**
+   ```typescript
+   const { canCreate, canUpdate, canDelete } = useModulePermissions("Users");
+   
+   // Only show create button if user has create permission
+   {canCreate && <CreateUserButton />}
+   
+   // Only show edit/delete buttons if user has respective permissions
+   {canUpdate && <EditButton />}
+   {canDelete && <DeleteButton />}
+   ```
+
+This RBAC system provides multiple layers of security and ensures that users can only access and perform actions they are authorized for, creating a secure and user-friendly application.

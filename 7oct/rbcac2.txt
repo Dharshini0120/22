@@ -1,0 +1,465 @@
+I'll provide a comprehensive explanation of the entire Roles and Permissions (RBAC) functionality implementation in this project, from start to finish.
+
+## **Complete RBAC Implementation Overview**
+
+### **1. Architecture Overview**
+
+The RBAC system follows a **module-based permission model** with:
+- **Roles**: User roles (Admin, User, etc.)
+- **Modules**: Application sections (Dashboard, Organizations, etc.)
+- **Permissions**: CRUD operations (Create, Read, Update, Delete)
+- **Route Protection**: URL-based access control
+- **Component Protection**: UI element-level access control
+
+---
+
+## **2. Core RBAC Files**
+
+### **A. State Management Files**
+
+#### **`src/store/UserPermissionSlice.ts`**
+```typescript
+// Redux slice for managing access rights
+interface AccessRight {
+  role_id: string;
+  role_name: string;
+  modules: Module[];
+}
+
+interface Module {
+  module_id: string;
+  module_name: string;
+  permissions: Permission[];
+}
+
+interface Permission {
+  permission_id: string;
+  permission_name: string; // "create", "read", "update", "delete"
+}
+```
+
+#### **`src/store/userSlice.ts`**
+```typescript
+// User details including role information
+interface UserDetail {
+  full_name?: string;
+  user_name?: string;
+  email?: string;
+  role?: {
+    name?: string; // Role name
+  };
+  organization?: {
+    name?: string;
+    id?: string;
+  };
+  // ... other user fields
+}
+```
+
+#### **`src/store/userthunk.ts`**
+```typescript
+// Async thunk for fetching user details including role
+export const fetchUserById = createAsyncThunk(
+  "user/fetchById",
+  async (userId: string, { dispatch, rejectWithValue }) => {
+    try {
+      const res = await Getrole(userId);
+      dispatch(userResponse(res.data));
+      return res.data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data || "Failed to fetch user");
+    }
+  }
+);
+```
+
+### **B. API Service Files**
+
+#### **`src/services/rolesapiService.ts`**
+```typescript
+// All role and permission related API calls
+export const roleList = async () => {
+  const response = await rolesApi.get("/");
+  return response;
+};
+
+export const moduleList = async () => {
+  const response = await rolesApi.get("/modules");
+  return response;
+};
+
+export const permissionList = async () => {
+  const response = await rolesApi.get("/permissions");
+  return response;
+};
+
+export const getPermissionData = async (id: string) => {
+  const response = await rolesApi.get(`/getRoleDetails/${id}`);
+  return response;
+};
+
+export const updatePermissionData = async (payload) => {
+  const response = await rolesApi.post("/rolePermission/bulk-update", payload);
+  return response;
+};
+```
+
+#### **`src/services/profileApiService.ts`**
+```typescript
+// User profile API including role fetching
+export const Getrole = async (Userid: string) => {
+  const response = await profileApi.get(`/${Userid}`);
+  return response;
+};
+```
+
+### **C. Permission Hook**
+
+#### **`src/hooks/useModulePermissions.ts`**
+```typescript
+// Custom hook for checking module permissions
+export function useModulePermissions(moduleName: string): ModulePermissions {
+  const accessRights = useAppSelector((state: RootState) => 
+    state?.accessRights?.accessRightsList?.modules
+  );
+  
+  return useMemo(() => {
+    const targetModule = accessRights?.find((mod) => mod?.module_name === moduleName);
+    const perms = targetModule?.permissions?.map((p) => p?.permission_name) || [];
+
+    return {
+      canCreate: perms.includes("create"),
+      canRead: perms.includes("read"),
+      canUpdate: perms.includes("update"),
+      canDelete: perms.includes("delete"),
+    };
+  }, [accessRights, moduleName]);
+}
+```
+
+---
+
+## **3. RBAC Implementation Flow**
+
+### **Step 1: User Authentication & Role Loading**
+
+#### **`src/app/landingPage/page.tsx`** & **`src/app/landingPage/QRCodePopup.tsx`**
+
+**OTP Verification Process:**
+```typescript
+// After successful OTP verification
+if (res?.data?.user_id && res?.data?.role_id) {
+  // 1. Fetch user details including role
+  await dispatch(fetchUserById(res?.data?.user_id));
+
+  // 2. Fetch role-specific permissions for ALL modules
+  const Permission = await getPermissionData(res?.data?.role_id);
+  
+  // 3. Add profile permissions manually (not in API)
+  Permission.data.modules.push({
+    module_id: "0e882c3f-74da-4386-8633-76f2d7e6cdm6",
+    module_name: "profile",
+    permissions: [
+      { permission_id: "read", permission_name: "read" },
+      { permission_id: "update", permission_name: "update" },
+    ],
+  });
+
+  // 4. Store permissions in Redux
+  dispatch(setAccessRightsList(Permission.data));
+}
+```
+
+### **Step 2: Route-Level Protection**
+
+#### **`src/app/(protected)/layout.tsx`**
+
+**Route Access Control:**
+```typescript
+const moduleNameToPathMap: Record<string, string> = {
+  "Dashboard": "/dashboard",
+  "Organizations": "/organizations",
+  "Project Dockets": "/project-dockets",
+  "Datasets": "/datasets",
+  "User Management": "/user-management",
+  "Audit Logs": "/audit-logs",
+  "Forms": "/forms",
+  "Request Approval": "/request-approval",
+  "Role & Access": "/role-access",
+  "Settings": "/settings",
+  "profile": "/profile",
+};
+
+const isAllowed = useMemo(() => {
+  if (!pathname || !permissions) return false;
+  return permissions.some(({ module_name, permissions: perms }) => {
+    const basePath = moduleNameToPathMap[module_name];
+    if (!basePath) return false;
+
+    // Base module access
+    if (pathname === basePath) return true;
+    
+    // Action-specific access
+    if (pathname?.startsWith(`${basePath}/create`) && perms.includes("create")) return true;
+    if (pathname?.startsWith(`${basePath}/edit`) && perms.includes("update")) return true;
+    if (pathname?.startsWith(`${basePath}/view`) && perms.includes("read")) return true;
+    return false;
+  });
+}, [pathname, permissions]);
+
+// Redirect unauthorized users
+useEffect(() => {
+  if (!isAllowed) {
+    router.replace("/unauthorized");
+    // Clear tokens and redirect to login
+  }
+}, [isAllowed, router]);
+```
+
+### **Step 3: Component-Level Permission Checks**
+
+#### **Example: Project Dockets Page** (`src/app/(protected)/project-dockets/page.tsx`)
+
+```typescript
+const ProjectDocketsPage: React.FC = () => {
+  // Get permissions for this module
+  const { canCreate, canRead, canUpdate } = useModulePermissions("Project Dockets");
+
+  return (
+    <div>
+      {/* CREATE permission check */}
+      {canCreate && (
+        <CustomButton
+          text="Create Dockets"
+          onClick={handleCreateProject}
+        />
+      )}
+
+      {/* Pass permissions to child components */}
+      {projectListData.map((project) => (
+        <ProjectCard
+          key={project.id}
+          {...project}
+          canUpdate={canUpdate}
+          canRead={canRead}
+        />
+      ))}
+    </div>
+  );
+};
+```
+
+#### **Example: Project Card Component** (`src/components/common/ProjectCard.tsx`)
+
+```typescript
+const ProjectCard: React.FC<CardProps> = ({ canRead, canUpdate, ...props }) => {
+  // Get CREATE permission for this module
+  const { canCreate } = useModulePermissions("Project Dockets");
+
+  return (
+    <Card>
+      {/* CREATE permission for action buttons */}
+      {taggingSampleDataset === "" && canCreate && (
+        <CustomButton
+          text="Request to SingHealth"
+          onClick={() => setModelOpen(true)}
+        />
+      )}
+
+      {/* READ permission for view actions */}
+      {role.toLowerCase() !== "user" && canRead && (
+        <Box display="flex" alignItems="center">
+          <IconButton onClick={handleLikeClick}>
+            <BoltIcon />
+          </IconButton>
+        </Box>
+      )}
+
+      {/* UPDATE permission for edit buttons */}
+      {(status === 3 || status === 9) && (
+        <CustomButton
+          text="Edit"
+          onClick={handlegetProject}
+        />
+      )}
+    </Card>
+  );
+};
+```
+
+---
+
+## **4. Permission Management Interface**
+
+### **Role & Access Management Page** (`src/app/(protected)/role-access/page.tsx`)
+
+**Permission Assignment Interface:**
+```typescript
+const RoleAndAccessPage: React.FC = () => {
+  const [accessRights, setAccessRights] = useState([]);
+  const [selectedRole, setSelectedRole] = useState("");
+
+  // Fetch all modules and permissions
+  useEffect(() => {
+    fetchRoleData();      // Get all roles
+    fetchModuleData();    // Get all modules
+    fetchPermissionData(); // Get all permissions
+  }, []);
+
+  // Load permissions for selected role
+  const fetchRolePermissions = async () => {
+    const selected = rolesListData.find((role) => role.name === selectedRole);
+    const res = await getPermissionData(selected.id);
+    
+    // Map API response to checkbox states
+    const updatedRights = accessRights.map((module) => {
+      const foundModule = roleModules.find((m) => m.module_id === module.id);
+      const modulePermissions = foundModule?.permissions?.map((p) => 
+        p.permission_name.toLowerCase()
+      ) || [];
+
+      return {
+        ...module,
+        create: modulePermissions.includes("create"),
+        read: modulePermissions.includes("read"),
+        update: modulePermissions.includes("update"),
+        delete: modulePermissions.includes("delete"),
+      };
+    });
+
+    setAccessRights(updatedRights);
+  };
+
+  // Save permission changes
+  const handleSavePermission = async () => {
+    const finalPayload = {
+      role_id: roleId,
+      module_id: module_ids,
+      permission_id: permission_ids
+    };
+    
+    await updatePermissionData(finalPayload);
+  };
+};
+```
+
+### **Access Rights Tab Component** (`src/components/rolesAndPermissions/AccessRightsTab.tsx`)
+
+**Permission Checkbox Interface:**
+```typescript
+const AccessRightsTab: React.FC<AccessRightsTabProps> = ({
+  selectedRole,
+  setSelectedRole,
+  rolesListData,
+  permissionAccess,
+  accessRights,
+  handleCheckboxChange,
+  handleSavePermission
+}) => (
+  <TableContainer>
+    <Table>
+      <TableHead>
+        <TableRow>
+          <TableCell>Module</TableCell>
+          {permissionAccess.map((action) => (
+            <TableCell key={action.id}>
+              {action.name} {/* create, read, update, delete */}
+            </TableCell>
+          ))}
+        </TableRow>
+      </TableHead>
+      <TableBody>
+        {accessRights.map((right, index) => (
+          <TableRow key={right.id}>
+            <TableCell>{right.name}</TableCell>
+            {["create", "read", "update", "delete"].map((field) => (
+              <TableCell key={field}>
+                <Checkbox
+                  checked={!!right[field]}
+                  onChange={() => handleCheckboxChange(index, field)}
+                />
+              </TableCell>
+            ))}
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  </TableContainer>
+);
+```
+
+---
+
+## **5. Permission Usage Patterns**
+
+### **A. Route-Based Protection**
+- **Base Access**: `/module-name` - Requires module permission
+- **CREATE**: `/module-name/create` - Requires `create` permission
+- **READ**: `/module-name/view` - Requires `read` permission
+- **UPDATE**: `/module-name/edit` - Requires `update` permission
+
+### **B. Component-Based Protection**
+```typescript
+// Button visibility
+{canCreate && <CreateButton />}
+{canUpdate && <EditButton />}
+{canDelete && <DeleteButton />}
+
+// Data access
+{canRead && <DataDisplay />}
+
+// Navigation
+{canRead && <Link to="/module/view" />}
+```
+
+### **C. API Integration**
+```typescript
+// Permission mapping for API calls
+if (module.create) {
+  const createPermission = permissionAccess.find((p) => p.name === "create");
+  if (createPermission) permissionGroup.push(createPermission.id);
+}
+```
+
+---
+
+## **6. Complete RBAC File List**
+
+### **Core RBAC Files:**
+1. **`src/store/UserPermissionSlice.ts`** - Redux slice for permissions
+2. **`src/store/userSlice.ts`** - User state management
+3. **`src/store/userthunk.ts`** - User data fetching
+4. **`src/hooks/useModulePermissions.ts`** - Permission checking hook
+5. **`src/services/rolesapiService.ts`** - Role/permission APIs
+6. **`src/services/profileApiService.ts`** - User profile APIs
+
+### **UI Components:**
+7. **`src/app/(protected)/role-access/page.tsx`** - Permission management page
+8. **`src/components/rolesAndPermissions/AccessRightsTab.tsx`** - Permission checkboxes
+9. **`src/components/rolesAndPermissions/RolesTab.tsx`** - Role management tab
+
+### **Route Protection:**
+10. **`src/app/(protected)/layout.tsx`** - Route-level protection
+11. **`src/middleware.ts`** - Authentication middleware
+
+### **Authentication Flow:**
+12. **`src/app/landingPage/page.tsx`** - OTP verification with role loading
+13. **`src/app/landingPage/QRCodePopup.tsx`** - QR code verification
+
+### **Example Usage Pages:**
+14. **`src/app/(protected)/project-dockets/page.tsx`** - Project management with permissions
+15. **`src/app/(protected)/datasets/page.tsx`** - Dataset management with permissions
+16. **`src/components/common/ProjectCard.tsx`** - Project card with permission checks
+17. **`src/components/common/DatasetCard.tsx`** - Dataset card with permission checks
+
+---
+
+## **7. RBAC Flow Summary**
+
+1. **Login** → OTP Verification → Fetch User Role → Fetch Role Permissions → Store in Redux
+2. **Route Access** → Check permissions in layout → Allow/Deny access
+3. **Component Rendering** → Check permissions with hook → Show/Hide UI elements
+4. **User Actions** → Validate permissions → Execute/Block operations
+5. **Admin Management** → Role & Access page → Modify permissions → Save to backend
+
+This comprehensive RBAC system provides **granular control** over user access at both the **route level** and **component level**, ensuring security while maintaining a clean user experience.

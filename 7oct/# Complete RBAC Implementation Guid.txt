@@ -1,0 +1,1618 @@
+# Complete RBAC Implementation Guide
+
+Here's a detailed prompt with all files, their usage, and step-by-step implementation instructions for your RBAC workflow:
+
+## 📋 Implementation Checklist
+
+### Phase 1: Setup Dependencies
+```bash
+npm install @reduxjs/toolkit react-redux redux-persist @apollo/client graphql @mui/material @mui/icons-material @emotion/react @emotion/styled
+```
+
+### Phase 2: Create Core Files
+
+## 1. **Types & Interfaces** (`src/types/rbac.ts`)
+
+**Purpose**: Defines all TypeScript interfaces for RBAC system
+**Usage**: Provides type safety across the entire application
+
+```typescript
+// types/rbac.ts
+export interface Permission {
+  create: boolean;
+  view: boolean;
+  update: boolean;
+  delete: boolean;
+}
+
+export interface Module {
+  slug: string;
+  name: string;
+  permissions: Permission;
+}
+
+export interface Role {
+  _id: string;
+  roleName: string;
+  roleslug: string;
+  description?: string;
+  modules: Module[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface User {
+  _id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  role: Role;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApiResponse<T> {
+  status: string;
+  message: string;
+  statusCode: number;
+  data: T;
+  error: string | null;
+}
+
+export interface CreateRoleInput {
+  roleName: string;
+  description?: string;
+}
+
+export interface UpdateRoleInput {
+  roleId: string;
+  roleName?: string;
+  description?: string;
+}
+
+export interface UpdatePermissionsInput {
+  roleId: string;
+  modules: {
+    name: string;
+    permissions: Permission;
+  }[];
+}
+
+export interface ModulePermissions {
+  canCreate: boolean;
+  canView: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+}
+
+// Available modules in your system
+export const AVAILABLE_MODULES = [
+  { slug: 'dashboard', name: 'Dashboard' },
+  { slug: 'user_management', name: 'User Management' },
+  { slug: 'assessment_engine', name: 'Assessment Engine' },
+  { slug: 'assessment_list', name: 'Assessment List' },
+  { slug: 'settings', name: 'Settings' },
+  { slug: 'audit_logs', name: 'Audit Logs' },
+] as const;
+
+export type ModuleSlug = typeof AVAILABLE_MODULES[number]['slug'];
+export type ModuleName = typeof AVAILABLE_MODULES[number]['name'];
+```
+
+## 2. **Redux Store Setup**
+
+### **User Slice** (`src/store/slices/userSlice.ts`)
+**Purpose**: Manages user authentication state
+**Usage**: Stores current user data and authentication status
+
+```typescript
+// store/slices/userSlice.ts
+import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { User } from '../../types/rbac';
+
+interface UserState {
+  user: User | null;
+  loading: boolean;
+  error: string | null;
+}
+
+const initialState: UserState = {
+  user: null,
+  loading: false,
+  error: null,
+};
+
+const userSlice = createSlice({
+  name: 'user',
+  initialState,
+  reducers: {
+    setUser: (state, action: PayloadAction<User>) => {
+      state.user = action.payload;
+      state.error = null;
+    },
+    setLoading: (state, action: PayloadAction<boolean>) => {
+      state.loading = action.payload;
+    },
+    setError: (state, action: PayloadAction<string>) => {
+      state.error = action.payload;
+      state.loading = false;
+    },
+    clearUser: (state) => {
+      state.user = null;
+      state.error = null;
+    },
+  },
+});
+
+export const { setUser, setLoading, setError, clearUser } = userSlice.actions;
+export default userSlice.reducer;
+```
+
+### **Permissions Slice** (`src/store/slices/permissionsSlice.ts`)
+**Purpose**: Manages role and permission state
+**Usage**: Stores current user's role and all available roles
+
+```typescript
+// store/slices/permissionsSlice.ts
+import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { Role } from '../../types/rbac';
+
+interface PermissionsState {
+  currentRole: Role | null;
+  allRoles: Role[];
+  loading: boolean;
+  error: string | null;
+}
+
+const initialState: PermissionsState = {
+  currentRole: null,
+  allRoles: [],
+  loading: false,
+  error: null,
+};
+
+const permissionsSlice = createSlice({
+  name: 'permissions',
+  initialState,
+  reducers: {
+    setCurrentRole: (state, action: PayloadAction<Role>) => {
+      state.currentRole = action.payload;
+      state.error = null;
+    },
+    setAllRoles: (state, action: PayloadAction<Role[]>) => {
+      state.allRoles = action.payload;
+      state.error = null;
+    },
+    addRole: (state, action: PayloadAction<Role>) => {
+      state.allRoles.push(action.payload);
+    },
+    updateRole: (state, action: PayloadAction<Role>) => {
+      const index = state.allRoles.findIndex(role => role._id === action.payload._id);
+      if (index !== -1) {
+        state.allRoles[index] = action.payload;
+      }
+      if (state.currentRole?._id === action.payload._id) {
+        state.currentRole = action.payload;
+      }
+    },
+    removeRole: (state, action: PayloadAction<string>) => {
+      state.allRoles = state.allRoles.filter(role => role._id !== action.payload);
+      if (state.currentRole?._id === action.payload) {
+        state.currentRole = null;
+      }
+    },
+    setLoading: (state, action: PayloadAction<boolean>) => {
+      state.loading = action.payload;
+    },
+    setError: (state, action: PayloadAction<string>) => {
+      state.error = action.payload;
+      state.loading = false;
+    },
+    clearPermissions: (state) => {
+      state.currentRole = null;
+      state.allRoles = [];
+      state.error = null;
+    },
+  },
+});
+
+export const {
+  setCurrentRole,
+  setAllRoles,
+  addRole,
+  updateRole,
+  removeRole,
+  setLoading,
+  setError,
+  clearPermissions,
+} = permissionsSlice.actions;
+
+export default permissionsSlice.reducer;
+```
+
+### **Store Configuration** (`src/store/store.ts`)
+**Purpose**: Configures Redux store with persistence
+**Usage**: Main store setup with Redux Toolkit and persistence
+
+```typescript
+// store/store.ts
+import { configureStore, combineReducers } from '@reduxjs/toolkit';
+import { persistStore, persistReducer } from 'redux-persist';
+import storage from 'redux-persist/lib/storage';
+import userReducer from './slices/userSlice';
+import permissionsReducer from './slices/permissionsSlice';
+
+const persistConfig = {
+  key: 'root',
+  storage,
+  whitelist: ['user', 'permissions'], // Persist user and permissions
+};
+
+const rootReducer = combineReducers({
+  user: userReducer,
+  permissions: permissionsReducer,
+});
+
+const persistedReducer = persistReducer(persistConfig, rootReducer);
+
+export const store = configureStore({
+  reducer: persistedReducer,
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware({
+      serializableCheck: {
+        ignoredActions: ['persist/PERSIST', 'persist/REHYDRATE'],
+      },
+    }),
+});
+
+export const persistor = persistStore(store);
+
+export type RootState = ReturnType<typeof store.getState>;
+export type AppDispatch = typeof store.dispatch;
+```
+
+### **Typed Hooks** (`src/store/hooks.ts`)
+**Purpose**: Provides typed Redux hooks
+**Usage**: Type-safe useSelector and useDispatch hooks
+
+```typescript
+// store/hooks.ts
+import { useDispatch, useSelector, TypedUseSelectorHook } from 'react-redux';
+import type { RootState, AppDispatch } from './store';
+
+export const useAppDispatch = () => useDispatch<AppDispatch>();
+export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector;
+```
+
+## 3. **Permission Hooks**
+
+### **useModulePermissions Hook** (`src/hooks/useModulePermissions.ts`)
+**Purpose**: Checks permissions for specific modules
+**Usage**: Used in components to conditionally render UI elements
+
+```typescript
+// hooks/useModulePermissions.ts
+import { useMemo } from 'react';
+import { useAppSelector } from '../store/hooks';
+import { ModulePermissions, ModuleName } from '../types/rbac';
+
+export function useModulePermissions(moduleName: ModuleName): ModulePermissions {
+  const currentRole = useAppSelector((state) => state.permissions.currentRole);
+
+  return useMemo(() => {
+    if (!currentRole?.modules) {
+      return {
+        canCreate: false,
+        canView: false,
+        canUpdate: false,
+        canDelete: false,
+      };
+    }
+
+    const targetModule = currentRole.modules.find(
+      (module) => module.name === moduleName
+    );
+
+    if (!targetModule) {
+      return {
+        canCreate: false,
+        canView: false,
+        canUpdate: false,
+        canDelete: false,
+      };
+    }
+
+    return {
+      canCreate: targetModule.permissions.create,
+      canView: targetModule.permissions.view,
+      canUpdate: targetModule.permissions.update,
+      canDelete: targetModule.permissions.delete,
+    };
+  }, [currentRole, moduleName]);
+}
+
+// Hook to check if user has any permission for a module
+export function useHasModuleAccess(moduleName: ModuleName): boolean {
+  const permissions = useModulePermissions(moduleName);
+  
+  return useMemo(() => {
+    return permissions.canCreate || 
+           permissions.canView || 
+           permissions.canUpdate || 
+           permissions.canDelete;
+  }, [permissions]);
+}
+
+// Hook to get all accessible modules
+export function useAccessibleModules(): string[] {
+  const currentRole = useAppSelector((state) => state.permissions.currentRole);
+
+  return useMemo(() => {
+    if (!currentRole?.modules) return [];
+    
+    return currentRole.modules
+      .filter(module => 
+        module.permissions.create || 
+        module.permissions.view || 
+        module.permissions.update || 
+        module.permissions.delete
+      )
+      .map(module => module.name);
+  }, [currentRole]);
+}
+```
+
+### **useRbac Hook** (`src/hooks/useRbac.ts`)
+**Purpose**: Provides RBAC operations and utilities
+**Usage**: Used for loading roles, checking permissions, and RBAC operations
+
+```typescript
+// hooks/useRbac.ts
+import { useEffect } from 'react';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { setCurrentRole, setLoading, setError } from '../store/slices/permissionsSlice';
+import { setUser } from '../store/slices/userSlice';
+import RbacApiService from '../services/rbacApi';
+
+// Custom hook for RBAC operations
+export const useRbac = () => {
+  const dispatch = useAppDispatch();
+  const { currentRole, loading } = useAppSelector((state) => state.permissions);
+  const { user } = useAppSelector((state) => state.user);
+
+  // Initialize API service (you'll need to pass your Apollo client)
+  const rbacApi = new RbacApiService(/* your Apollo client */);
+
+  // Load user role after authentication (call this after OTP verification)
+  const loadUserRole = async () => {
+    try {
+      dispatch(setLoading(true));
+      const response = await rbacApi.getUserRole();
+      
+      if (response.getByRole.status === 'success') {
+        dispatch(setCurrentRole(response.getByRole.data));
+        return response.getByRole.data;
+      } else {
+        dispatch(setError(response.getByRole.message));
+        throw new Error(response.getByRole.message);
+      }
+    } catch (error) {
+      dispatch(setError('Failed to load user role'));
+      throw error;
+    } finally {
+      dispatch(setLoading(false));
+    }
+  };
+
+  // Load all roles (for admin users)
+  const loadAllRoles = async () => {
+    try {
+      dispatch(setLoading(true));
+      const response = await rbacApi.getAllRoles();
+      
+      if (response.listAllRoles.status === 'success') {
+        return response.listAllRoles.data;
+      } else {
+        dispatch(setError(response.listAllRoles.message));
+        throw new Error(response.listAllRoles.message);
+      }
+    } catch (error) {
+      dispatch(setError('Failed to load roles'));
+      throw error;
+    } finally {
+      dispatch(setLoading(false));
+    }
+  };
+
+  // Check if user has permission for a specific action
+  const hasPermission = (moduleName: string, action: 'create' | 'view' | 'update' | 'delete'): boolean => {
+    if (!currentRole?.modules) return false;
+    
+    const module = currentRole.modules.find(m => m.name === moduleName);
+    return module?.permissions[action] || false;
+  };
+
+  // Get accessible modules for the current user
+  const getAccessibleModules = (): string[] => {
+    if (!currentRole?.modules) return [];
+    
+    return currentRole.modules
+      .filter(module => 
+        module.permissions.create || 
+        module.permissions.view || 
+        module.permissions.update || 
+        module.permissions.delete
+      )
+      .map(module => module.name);
+  };
+
+  return {
+    currentRole,
+    user,
+    loading,
+    loadUserRole,
+    loadAllRoles,
+    hasPermission,
+    getAccessibleModules,
+  };
+};
+```
+
+## 4. **GraphQL Services**
+
+### **GraphQL Queries/Mutations** (`src/services/graphql/rbacService.ts`)
+**Purpose**: Defines all GraphQL operations for RBAC
+**Usage**: Provides type-safe GraphQL operations
+
+```typescript
+// services/graphql/rbacService.ts
+import { gql } from '@apollo/client';
+import { 
+  Role, 
+  CreateRoleInput, 
+  UpdateRoleInput, 
+  UpdatePermissionsInput,
+  ApiResponse 
+} from '../../types/rbac';
+
+// GraphQL Queries
+export const GET_ALL_ROLES = gql`
+  query GetAllRoles {
+    listAllRoles {
+      status
+      message
+      statusCode
+      data {
+        _id
+        roleName
+        roleslug
+        description
+        modules {
+          slug
+          name
+          permissions {
+            create
+            view
+            update
+            delete
+          }
+        }
+        createdAt
+        updatedAt
+      }
+      error
+    }
+  }
+`;
+
+export const GET_ROLE_BY_ID = gql`
+  query GetRoleById($roleId: String!) {
+    getRoleById(roleId: $roleId) {
+      status
+      message
+      statusCode
+      data {
+        _id
+        roleName
+        roleslug
+        description
+        modules {
+          slug
+          name
+          permissions {
+            create
+            view
+            update
+            delete
+          }
+        }
+        createdAt
+        updatedAt
+      }
+    }
+  }
+`;
+
+export const GET_ROLE_BY_SLUG = gql`
+  query GetRoleBySlug($identifier: String!) {
+    getRole(identifier: $identifier) {
+      status
+      message
+      statusCode
+      data {
+        _id
+        roleName
+        roleslug
+        description
+        modules {
+          slug
+          name
+          permissions {
+            create
+            view
+            update
+            delete
+          }
+        }
+        createdAt
+        updatedAt
+      }
+      error
+    }
+  }
+`;
+
+export const GET_USER_ROLE = gql`
+  query GetUserRole {
+    getByRole {
+      status
+      message
+      data {
+        _id
+        roleName
+        roleslug
+        description
+        modules {
+          slug
+          name
+          permissions {
+            create
+            view
+            update
+            delete
+          }
+        }
+        createdAt
+        updatedAt
+      }
+      error
+    }
+  }
+`;
+
+// GraphQL Mutations
+export const CREATE_ROLE = gql`
+  mutation CreateRole($input: CreateRoleInput!) {
+    createRole(input: $input) {
+      status
+      message
+      statusCode
+      data {
+        _id
+        roleName
+        roleslug
+        description
+        modules {
+          slug
+          name
+          permissions {
+            create
+            view
+            update
+            delete
+          }
+        }
+        createdAt
+        updatedAt
+      }
+      error
+    }
+  }
+`;
+
+export const UPDATE_ROLE = gql`
+  mutation UpdateRole($input: UpdateRoleInput!) {
+    updateRole(input: $input) {
+      status
+      message
+      statusCode
+      data {
+        _id
+        roleName
+        roleslug
+        description
+        modules {
+          slug
+          name
+          permissions {
+            create
+            view
+            update
+            delete
+          }
+        }
+        updatedAt
+      }
+      error
+    }
+  }
+`;
+
+export const UPDATE_ROLE_PERMISSIONS = gql`
+  mutation UpdateRoleAndPermissions($input: UpdatePermissionsInput!) {
+    updateRoleAndPermissions(input: $input) {
+      statusCode
+      message
+      data {
+        _id
+        roleName
+        roleslug
+        modules {
+          slug
+          name
+          permissions {
+            create
+            view
+            update
+            delete
+          }
+        }
+      }
+      error
+    }
+  }
+`;
+
+export const DELETE_ROLE = gql`
+  mutation DeleteRole($roleId: String!) {
+    deleteRole(roleId: $roleId) {
+      status
+      message
+      statusCode
+      data {
+        _id
+        roleName
+        roleslug
+      }
+      error
+    }
+  }
+`;
+
+// Type definitions for GraphQL responses
+export interface GetAllRolesResponse {
+  listAllRoles: ApiResponse<Role[]>;
+}
+
+export interface GetRoleByIdResponse {
+  getRoleById: ApiResponse<Role>;
+}
+
+export interface GetRoleBySlugResponse {
+  getRole: ApiResponse<Role>;
+}
+
+export interface GetUserRoleResponse {
+  getByRole: ApiResponse<Role>;
+}
+
+export interface CreateRoleResponse {
+  createRole: ApiResponse<Role>;
+}
+
+export interface UpdateRoleResponse {
+  updateRole: ApiResponse<Role>;
+}
+
+export interface UpdateRolePermissionsResponse {
+  updateRoleAndPermissions: ApiResponse<Role>;
+}
+
+export interface DeleteRoleResponse {
+  deleteRole: ApiResponse<{ _id: string; roleName: string; roleslug: string }>;
+}
+```
+
+### **API Service Wrapper** (`src/services/rbacApi.ts`)
+**Purpose**: Wraps GraphQL operations with error handling
+**Usage**: Provides clean API interface for RBAC operations
+
+```typescript
+// services/rbacApi.ts
+import { ApolloClient } from '@apollo/client';
+import { 
+  GET_ALL_ROLES,
+  GET_ROLE_BY_ID,
+  GET_ROLE_BY_SLUG,
+  GET_USER_ROLE,
+  CREATE_ROLE,
+  UPDATE_ROLE,
+  UPDATE_ROLE_PERMISSIONS,
+  DELETE_ROLE,
+  GetAllRolesResponse,
+  GetRoleByIdResponse,
+  GetRoleBySlugResponse,
+  GetUserRoleResponse,
+  CreateRoleResponse,
+  UpdateRoleResponse,
+  UpdateRolePermissionsResponse,
+  DeleteRoleResponse,
+} from './graphql/rbacService';
+import { CreateRoleInput, UpdateRoleInput, UpdatePermissionsInput } from '../types/rbac';
+
+class RbacApiService {
+  constructor(private client: ApolloClient<any>) {}
+
+  // Get all roles
+  async getAllRoles(): Promise<GetAllRolesResponse> {
+    const { data } = await this.client.query({
+      query: GET_ALL_ROLES,
+      fetchPolicy: 'cache-first',
+    });
+    return data;
+  }
+
+  // Get role by ID
+  async getRoleById(roleId: string): Promise<GetRoleByIdResponse> {
+    const { data } = await this.client.query({
+      query: GET_ROLE_BY_ID,
+      variables: { roleId },
+      fetchPolicy: 'cache-first',
+    });
+    return data;
+  }
+
+  // Get role by slug
+  async getRoleBySlug(identifier: string): Promise<GetRoleBySlugResponse> {
+    const { data } = await this.client.query({
+      query: GET_ROLE_BY_SLUG,
+      variables: { identifier },
+      fetchPolicy: 'cache-first',
+    });
+    return data;
+  }
+
+  // Get current user's role (used during OTP verification)
+  async getUserRole(): Promise<GetUserRoleResponse> {
+    const { data } = await this.client.query({
+      query: GET_USER_ROLE,
+      fetchPolicy: 'no-cache', // Always fetch fresh data
+    });
+    return data;
+  }
+
+  // Create new role
+  async createRole(input: CreateRoleInput): Promise<CreateRoleResponse> {
+    const { data } = await this.client.mutate({
+      mutation: CREATE_ROLE,
+      variables: { input },
+      refetchQueries: [{ query: GET_ALL_ROLES }],
+    });
+    return data;
+  }
+
+  // Update role details
+  async updateRole(input: UpdateRoleInput): Promise<UpdateRoleResponse> {
+    const { data } = await this.client.mutate({
+      mutation: UPDATE_ROLE,
+      variables: { input },
+      refetchQueries: [{ query: GET_ALL_ROLES }],
+    });
+    return data;
+  }
+
+  // Update role permissions
+  async updateRolePermissions(input: UpdatePermissionsInput): Promise<UpdateRolePermissionsResponse> {
+    const { data } = await this.client.mutate({
+      mutation: UPDATE_ROLE_PERMISSIONS,
+      variables: { input },
+      refetchQueries: [{ query: GET_ALL_ROLES }],
+    });
+    return data;
+  }
+
+  // Delete role
+  async deleteRole(roleId: string): Promise<DeleteRoleResponse> {
+    const { data } = await this.client.mutate({
+      mutation: DELETE_ROLE,
+      variables: { roleId },
+      refetchQueries: [{ query: GET_ALL_ROLES }],
+    });
+    return data;
+  }
+}
+
+export default RbacApiService;
+```
+
+## 5. **Route Protection**
+
+### **Protected Layout** (`src/components/layout/ProtectedLayout.tsx`)
+**Purpose**: Protects routes based on user permissions
+**Usage**: Wraps protected pages to check access
+
+```typescript
+// components/layout/ProtectedLayout.tsx
+import React, { useEffect, useMemo } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
+import { useAppSelector, useAppDispatch } from '../../store/hooks';
+import { setCurrentRole } from '../../store/slices/permissionsSlice';
+import { AVAILABLE_MODULES } from '../../types/rbac';
+import { CircularProgress, Box, Typography, Alert } from '@mui/material';
+
+interface ProtectedLayoutProps {
+  children: React.ReactNode;
+}
+
+// Map module names to their corresponding routes
+const moduleNameToPathMap: Record<string, string> = {
+  'Dashboard': '/dashboard',
+  'User Management': '/user-management',
+  'Assessment Engine': '/assessment-engine',
+  'Assessment List': '/assessment-list',
+  'Settings': '/settings',
+  'Audit Logs': '/audit-logs',
+};
+
+const ProtectedLayout: React.FC<ProtectedLayoutProps> = ({ children }) => {
+  const router = useRouter();
+  const pathname = usePathname();
+  const dispatch = useAppDispatch();
+  
+  const { currentRole, loading } = useAppSelector((state) => state.permissions);
+  const { user } = useAppSelector((state) => state.user);
+
+  // Check if user has access to current route
+  const isAllowed = useMemo(() => {
+    if (!pathname || !currentRole?.modules) return false;
+
+    // Allow access to root and auth pages
+    if (pathname === '/' || pathname.startsWith('/auth') || pathname.startsWith('/login')) {
+      return true;
+    }
+
+    // Check if user has access to any module
+    return currentRole.modules.some((module) => {
+      const basePath = moduleNameToPathMap[module.name];
+      if (!basePath) return false;
+
+      // Check base module access
+      if (pathname === basePath) {
+        return module.permissions.view || module.permissions.create || 
+               module.permissions.update || module.permissions.delete;
+      }
+
+      // Check action-specific access
+      if (pathname.startsWith(`${basePath}/create`) && module.permissions.create) {
+        return true;
+      }
+      if (pathname.startsWith(`${basePath}/edit`) && module.permissions.update) {
+        return true;
+      }
+      if (pathname.startsWith(`${basePath}/view`) && module.permissions.view) {
+        return true;
+      }
+      if (pathname.startsWith(`${basePath}/delete`) && module.permissions.delete) {
+        return true;
+      }
+
+      return false;
+    });
+  }, [pathname, currentRole]);
+
+  // Redirect unauthorized users
+  useEffect(() => {
+    if (!loading && user && !isAllowed && pathname !== '/unauthorized') {
+      router.replace('/unauthorized');
+    }
+  }, [isAllowed, loading, user, pathname, router]);
+
+  // Show loading while checking permissions
+  if (loading) {
+    return (
+      <Box
+        display="flex"
+        flexDirection="column"
+        alignItems="center"
+        justifyContent="center"
+        minHeight="100vh"
+        gap={2}
+      >
+        <CircularProgress />
+        <Typography variant="body2" color="text.secondary">
+          Checking permissions...
+        </Typography>
+      </Box>
+    );
+  }
+
+  // Show unauthorized message
+  if (!isAllowed && user) {
+    return (
+      <Box
+        display="flex"
+        flexDirection="column"
+        alignItems="center"
+        justifyContent="center"
+        minHeight="100vh"
+        p={3}
+      >
+        <Alert severity="error" sx={{ maxWidth: 500, width: '100%' }}>
+          <Typography variant="h6" gutterBottom>
+            Access Denied
+          </Typography>
+          <Typography variant="body2">
+            You don't have permission to access this page. Please contact your administrator.
+          </Typography>
+        </Alert>
+      </Box>
+    );
+  }
+
+  // Show login prompt for unauthenticated users
+  if (!user) {
+    return (
+      <Box
+        display="flex"
+        flexDirection="column"
+        alignItems="center"
+        justifyContent="center"
+        minHeight="100vh"
+        p={3}
+      >
+        <Alert severity="info" sx={{ maxWidth: 500, width: '100%' }}>
+          <Typography variant="h6" gutterBottom>
+            Authentication Required
+          </Typography>
+          <Typography variant="body2">
+            Please log in to access this page.
+          </Typography>
+        </Alert>
+      </Box>
+    );
+  }
+
+  return <>{children}</>;
+};
+
+export default ProtectedLayout;
+```
+
+## 6. **Admin Management Components**
+
+### **Role Card Component** (`src/components/rbac/RoleCard.tsx`)
+**Purpose**: Displays role information in a card format
+**Usage**: Used in role management page to show role details
+
+```typescript
+// components/rbac/RoleCard.tsx
+import React from 'react';
+import { Card, CardContent, CardActions, Typography, Button, Chip, Box } from '@mui/material';
+import { Edit, Delete, Security } from '@mui/icons-material';
+import { Role } from '../../types/rbac';
+
+interface RoleCardProps {
+  role: Role;
+  onEdit: (role: Role) => void;
+  onDelete: (roleId: string) => void;
+  onManagePermissions: (role: Role) => void;
+}
+
+const RoleCard: React.FC<RoleCardProps> = ({
+  role,
+  onEdit,
+  onDelete,
+  onManagePermissions,
+}) => {
+  const moduleCount = role.modules?.length || 0;
+  const hasPermissions = moduleCount > 0;
+
+  return (
+    <Card sx={{ minHeight: 200, display: 'flex', flexDirection: 'column' }}>
+      <CardContent sx={{ flexGrow: 1 }}>
+        <Box display="flex" alignItems="center" gap={1} mb={2}>
+          <Security color="primary" />
+          <Typography variant="h6" component="h3">
+            {role.roleName}
+          </Typography>
+          <Chip 
+            label={role.roleslug} 
+            size="small" 
+            variant="outlined" 
+            color="primary"
+          />
+        </Box>
+
+        {role.description && (
+          <Typography variant="body2" color="text.secondary" mb={2}>
+            {role.description}
+          </Typography>
+        )}
+
+        <Box mb={2}>
+          <Typography variant="subtitle2" gutterBottom>
+            Modules ({moduleCount})
+          </Typography>
+          {hasPermissions ? (
+            <Box display="flex" flexWrap="wrap" gap={0.5}>
+              {role.modules.map((module) => (
+                <Chip
+                  key={module.slug}
+                  label={module.name}
+                  size="small"
+                  variant="outlined"
+                />
+              ))}
+            </Box>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              No modules assigned
+            </Typography>
+          )}
+        </Box>
+
+        <Typography variant="caption" color="text.secondary">
+          Created: {new Date(role.createdAt).toLocaleDateString()}
+        </Typography>
+      </CardContent>
+
+      <CardActions sx={{ justifyContent: 'space-between', px: 2, pb: 2 }}>
+        <Button
+          size="small"
+          startIcon={<Edit />}
+          onClick={() => onEdit(role)}
+        >
+          Edit
+        </Button>
+        <Button
+          size="small"
+          color="primary"
+          variant="outlined"
+          onClick={() => onManagePermissions(role)}
+        >
+          Permissions
+        </Button>
+        <Button
+          size="small"
+          color="error"
+          startIcon={<Delete />}
+          onClick={() => onDelete(role._id)}
+        >
+          Delete
+        </Button>
+      </CardActions>
+    </Card>
+  );
+};
+
+export default RoleCard;
+```
+
+### **Permission Matrix Component** (`src/components/rbac/PermissionMatrix.tsx`)
+**Purpose**: Displays permission matrix for role management
+**Usage**: Used in permission management page to modify role permissions
+
+```typescript
+// components/rbac/PermissionMatrix.tsx
+import React from 'react';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  Checkbox,
+  Typography,
+  Box,
+} from '@mui/material';
+import { AVAILABLE_MODULES } from '../../types/rbac';
+import { Permission } from '../../types/rbac';
+
+interface PermissionMatrixProps {
+  permissions: Record<string, Permission>;
+  onPermissionChange: (moduleSlug: string, permission: keyof Permission, value: boolean) => void;
+  disabled?: boolean;
+}
+
+const PermissionMatrix: React.FC<PermissionMatrixProps> = ({
+  permissions,
+  onPermissionChange,
+  disabled = false,
+}) => {
+  const permissionTypes: (keyof Permission)[] = ['create', 'view', 'update', 'delete'];
+
+  return (
+    <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
+      <Table stickyHeader>
+        <TableHead>
+          <TableRow>
+            <TableCell sx={{ fontWeight: 'bold', minWidth: 150 }}>
+              Module
+            </TableCell>
+            {permissionTypes.map((permission) => (
+              <TableCell
+                key={permission}
+                align="center"
+                sx={{ fontWeight: 'bold', textTransform: 'capitalize' }}
+              >
+                {permission}
+              </TableCell>
+            ))}
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {AVAILABLE_MODULES.map((module) => (
+            <TableRow key={module.slug}>
+              <TableCell>
+                <Typography variant="body2" fontWeight="medium">
+                  {module.name}
+                </Typography>
+              </TableCell>
+              {permissionTypes.map((permission) => (
+                <TableCell key={permission} align="center">
+                  <Checkbox
+                    checked={permissions[module.slug]?.[permission] || false}
+                    onChange={(e) =>
+                      onPermissionChange(module.slug, permission, e.target.checked)
+                    }
+                    disabled={disabled}
+                    color="primary"
+                  />
+                </TableCell>
+              ))}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
+};
+
+export default PermissionMatrix;
+```
+
+## 7. **Admin Management Pages**
+
+### **Role Management Page** (`src/pages/admin/role-management.tsx`)
+**Purpose**: Main page for managing roles
+**Usage**: Create, edit, delete roles
+
+```typescript
+// pages/admin/role-management.tsx
+import React, { useState, useEffect } from 'react';
+import {
+  Box,
+  Typography,
+  Button,
+  Grid,
+  Alert,
+  CircularProgress,
+  Snackbar,
+} from '@mui/material';
+import { Add, Refresh } from '@mui/icons-material';
+import { useAppSelector, useAppDispatch } from '../../store/hooks';
+import {
+  setAllRoles,
+  setLoading,
+  setError,
+  addRole,
+  updateRole,
+  removeRole,
+} from '../../store/slices/permissionsSlice';
+import { useModulePermissions } from '../../hooks/useModulePermissions';
+import RbacApiService from '../../services/rbacApi';
+import RoleCard from '../../components/rbac/RoleCard';
+import RoleForm from '../../components/rbac/RoleForm';
+import DeleteRoleDialog from '../../components/rbac/DeleteRoleDialog';
+import { Role, CreateRoleInput, UpdateRoleInput } from '../../types/rbac';
+
+const RoleManagementPage: React.FC = () => {
+  const dispatch = useAppDispatch();
+  const { allRoles, loading, error } = useAppSelector((state) => state.permissions);
+  const { canCreate, canView, canUpdate, canDelete } = useModulePermissions('User Management');
+
+  const [roleFormOpen, setRoleFormOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedRole, setSelectedRole] = useState<Role | null>(null);
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' as 'success' | 'error' });
+
+  // Initialize API service (you'll need to pass your Apollo client)
+  const rbacApi = new RbacApiService(/* your Apollo client */);
+
+  useEffect(() => {
+    if (canView) {
+      fetchRoles();
+    }
+  }, [canView]);
+
+  const fetchRoles = async () => {
+    try {
+      dispatch(setLoading(true));
+      const response = await rbacApi.getAllRoles();
+      
+      if (response.listAllRoles.status === 'success') {
+        dispatch(setAllRoles(response.listAllRoles.data));
+      } else {
+        dispatch(setError(response.listAllRoles.message));
+      }
+    } catch (err) {
+      dispatch(setError('Failed to fetch roles'));
+    } finally {
+      dispatch(setLoading(false));
+    }
+  };
+
+  const handleCreateRole = async (data: CreateRoleInput) => {
+    try {
+      dispatch(setLoading(true));
+      const response = await rbacApi.createRole(data);
+      
+      if (response.createRole.status === 'success') {
+        dispatch(addRole(response.createRole.data));
+        setRoleFormOpen(false);
+        setSnackbar({
+          open: true,
+          message: 'Role created successfully',
+          severity: 'success',
+        });
+      } else {
+        dispatch(setError(response.createRole.message));
+        setSnackbar({
+          open: true,
+          message: response.createRole.message,
+          severity: 'error',
+        });
+      }
+    } catch (err) {
+      dispatch(setError('Failed to create role'));
+      setSnackbar({
+        open: true,
+        message: 'Failed to create role',
+        severity: 'error',
+      });
+    } finally {
+      dispatch(setLoading(false));
+    }
+  };
+
+  const handleUpdateRole = async (data: UpdateRoleInput) => {
+    try {
+      dispatch(setLoading(true));
+      const response = await rbacApi.updateRole(data);
+      
+      if (response.updateRole.status === 'success') {
+        dispatch(updateRole(response.updateRole.data));
+        setRoleFormOpen(false);
+        setSnackbar({
+          open: true,
+          message: 'Role updated successfully',
+          severity: 'success',
+        });
+      } else {
+        dispatch(setError(response.updateRole.message));
+        setSnackbar({
+          open: true,
+          message: response.updateRole.message,
+          severity: 'error',
+        });
+      }
+    } catch (err) {
+      dispatch(setError('Failed to update role'));
+      setSnackbar({
+        open: true,
+        message: 'Failed to update role',
+        severity: 'error',
+      });
+    } finally {
+      dispatch(setLoading(false));
+    }
+  };
+
+  const handleDeleteRole = async () => {
+    if (!selectedRole) return;
+
+    try {
+      dispatch(setLoading(true));
+      const response = await rbacApi.deleteRole(selectedRole._id);
+      
+      if (response.deleteRole.status === 'success') {
+        dispatch(removeRole(selectedRole._id));
+        setDeleteDialogOpen(false);
+        setSnackbar({
+          open: true,
+          message: 'Role deleted successfully',
+          severity: 'success',
+        });
+      } else {
+        dispatch(setError(response.deleteRole.message));
+        setSnackbar({
+          open: true,
+          message: response.deleteRole.message,
+          severity: 'error',
+        });
+      }
+    } catch (err) {
+      dispatch(setError('Failed to delete role'));
+      setSnackbar({
+        open: true,
+        message: 'Failed to delete role',
+        severity: 'error',
+      });
+    } finally {
+      dispatch(setLoading(false));
+    }
+  };
+
+  const handleEditRole = (role: Role) => {
+    setSelectedRole(role);
+    setRoleFormOpen(true);
+  };
+
+  const handleDeleteClick = (roleId: string) => {
+    const role = allRoles.find(r => r._id === roleId);
+    if (role) {
+      setSelectedRole(role);
+      setDeleteDialogOpen(true);
+    }
+  };
+
+  const handleManagePermissions = (role: Role) => {
+    // Navigate to permissions management page
+    // You can implement this based on your routing setup
+    console.log('Manage permissions for role:', role.roleName);
+  };
+
+  if (!canView) {
+    return (
+      <Box p={3}>
+        <Alert severity="error">
+          You don't have permission to view role management.
+        </Alert>
+      </Box>
+    );
+  }
+
+  return (
+    <Box p={3}>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+        <Typography variant="h4" component="h1">
+          Role Management
+        </Typography>
+        <Box display="flex" gap={2}>
+          <Button
+            variant="outlined"
+            startIcon={<Refresh />}
+            onClick={fetchRoles}
+            disabled={loading}
+          >
+            Refresh
+          </Button>
+          {canCreate && (
+            <Button
+              variant="contained"
+              startIcon={<Add />}
+              onClick={() => {
+                setSelectedRole(null);
+                setRoleFormOpen(true);
+              }}
+            >
+              Create Role
+            </Button>
+          )}
+        </Box>
+      </Box>
+
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          {error}
+        </Alert>
+      )}
+
+      {loading ? (
+        <Box display="flex" justifyContent="center" p={4}>
+          <CircularProgress />
+        </Box>
+      ) : (
+        <Grid container spacing={3}>
+          {allRoles.map((role) => (
+            <Grid item xs={12} sm={6} md={4} key={role._id}>
+              <RoleCard
+                role={role}
+                onEdit={canUpdate ? handleEditRole : () => {}}
+                onDelete={canDelete ? handleDeleteClick : () => {}}
+                onManagePermissions={handleManagePermissions}
+              />
+            </Grid>
+          ))}
+        </Grid>
+      )}
+
+      {/* Snackbar for notifications */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar(prev => ({ ...prev, open: false }))}
+      >
+        <Alert
+          onClose={() => setSnackbar(prev => ({ ...prev, open: false }))}
+          severity={snackbar.severity}
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
+    </Box>
+  );
+};
+
+export default RoleManagementPage;
+```
+
+## 8. **Integration Examples**
+
+### **OTP Verification Integration** (`src/examples/OTPVerificationExample.tsx`)
+**Purpose**: Shows how to integrate RBAC after OTP verification
+**Usage**: Use this pattern in your OTP verification component
+
+```typescript
+// examples/OTPVerificationExample.tsx
+import React, { useEffect } from 'react';
+import { useAppDispatch } from '../store/hooks';
+import { setUser } from '../store/slices/userSlice';
+import { setCurrentRole } from '../store/slices/permissionsSlice';
+import { useRbac } from '../hooks/useRbac';
+
+// Example: How to integrate RBAC after OTP verification
+const OTPVerificationExample: React.FC = () => {
+  const dispatch = useAppDispatch();
+  const { loadUserRole } = useRbac();
+
+  const handleOTPVerification = async (otpData: any) => {
+    try {
+      // 1. After successful OTP verification, set user data
+      dispatch(setUser({
+        _id: otpData.userId,
+        email: otpData.email,
+        firstName: otpData.firstName,
+        lastName: otpData.lastName,
+        role: null, // Will be loaded separately
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }));
+
+      // 2. Load user's role and permissions
+      const userRole = await loadUserRole();
+      
+      // 3. Role is automatically stored in Redux
+      // 4. User can now access protected routes and components
+      
+      console.log('User role loaded:', userRole);
+      
+    } catch (error) {
+      console.error('Failed to load user role:', error);
+    }
+  };
+
+  return (
+    <div>
+      {/* Your OTP verification UI */}
+      <button onClick={() => handleOTPVerification({ userId: '123', email: 'user@example.com' })}>
+        Verify OTP
+      </button>
+    </div>
+  );
+};
+
+export default OTPVerificationExample;
+```
+
+### **Component Usage Example** (`src/examples/ComponentUsageExample.tsx`)
+**Purpose**: Shows how to use permissions in components
+**Usage**: Reference for implementing permission checks in your components
+
+```typescript
+// examples/ComponentUsageExample.tsx
+import React from 'react';
+import { Button, Box } from '@mui/material';
+import { useModulePermissions } from '../hooks/useModulePermissions';
+
+// Example: How to use permissions in components
+const ComponentUsageExample: React.FC = () => {
+  // Get permissions for specific modules
+  const { canCreate, canView, canUpdate, canDelete } = useModulePermissions('User Management');
+  const assessmentPermissions = useModulePermissions('Assessment Engine');
+
+  return (
+    <Box p={3}>
+      <h2>Component Permission Examples</h2>
+      
+      {/* User Management Module */}
+      <Box mb={3}>
+        <h3>User Management</h3>
+        {canCreate && (
+          <Button variant="contained" color="primary">
+            Create User
+          </Button>
+        )}
+        {canView && (
+          <Button variant="outlined" sx={{ ml: 1 }}>
+            View Users
+          </Button>
+        )}
+        {canUpdate && (
+          <Button variant="outlined" sx={{ ml: 1 }}>
+            Edit User
+          </Button>
+        )}
+        {canDelete && (
+          <Button variant="outlined" color="error" sx={{ ml: 1 }}>
+            Delete User
+          </Button>
+        )}
+      </Box>
+
+      {/* Assessment Engine Module */}
+      <Box mb={3}>
+        <h3>Assessment Engine</h3>
+        {assessmentPermissions.canCreate && (
+          <Button variant="contained" color="primary">
+            Create Assessment
+          </Button>
+        )}
+        {assessmentPermissions.canView && (
+          <Button variant="outlined" sx={{ ml: 1 }}>
+            View Assessments
+          </Button>
+        )}
+      </Box>
+
+      {/* Conditional rendering based on permissions */}
+      {canCreate && (
+        <Box p={2} bgcolor="grey.100" borderRadius={1}>
+          <p>This content is only visible to users who can create users.</p>
+        </Box>
+      )}
+    </Box>
+  );
+};
+
+export default ComponentUsageExample;
+```
+
+## 9. **Setup Instructions**
+
+### **Step 1: Install Dependencies**
+```bash
+npm install @reduxjs/toolkit react-redux redux-persist @apollo/client graphql @mui/material @mui/icons-material @emotion/react @emotion/styled
+```
+
+### **Step 2: Setup Apollo Client**
+```typescript
+// apollo-client.ts
+import { ApolloClient, InMemoryCache, createHttpLink } from '@apollo/client';
+
+const httpLink = createHttpLink({
+  uri: 'YOUR_GRAPHQL_ENDPOINT',
+});
+
+export const apolloClient = new ApolloClient({
+  link: httpLink,
+  cache: new InMemoryCache(),
+});
+```
+
+### **Step 3:

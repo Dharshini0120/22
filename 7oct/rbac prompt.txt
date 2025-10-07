@@ -1,0 +1,545 @@
+ok i am going to implemnt this project's rbac functionality  workflow in another project , providing below my another's project's rbac api's and providing you the code files also in public>role-access, and a page where i have admin listing and create admin-users button and all ,   CreateRole 	Mutation	"mutation CreateRole {
+  createRole(input: {
+    roleName: ""hospital""
+  })  {
+    status
+    message
+    statusCode
+    data
+    error
+  }
+}"	"{
+  ""data"": {
+    ""createRole"": {
+      ""status"": ""success"",
+      ""message"": ""Role created successfully"",
+      ""statusCode"": 201,
+      ""data"": {
+        ""_id"": ""689370863012a1e957073a3a"",
+        ""roleName"": ""hospital"",
+        ""permissions"": [],
+        ""createdAt"": ""2025-08-06T15:11:02.104Z"",
+        ""updatedAt"": ""2025-08-06T15:11:02.104Z""
+      },
+      ""error"": null
+    }
+  }
+}"			
+updatePermissions	Mutation	"mutation UpdateRoleAndPermissions {
+  updateRoleAndPermissions(
+    input: {
+      roleId: ""689d628e70418e123ef3c7f1""
+      modules: [
+        {
+          name: ""settings""
+          permissions: { create: true, view: true, update: true, delete: true }
+        }
+      ]
+    }
+  ) {
+    statusCode
+    message
+    data
+    error
+  }
+}
+"	"{
+  ""data"": {
+    ""updateRoleAndPermissions"": {
+      ""statusCode"": 200,
+      ""message"": ""Role and permissions updated successfully"",
+      ""data"": {
+        ""_id"": ""689d628e70418e123ef3c7f1"",
+        ""roleName"": ""Super Admin"",
+        ""roleslug"": ""superadmin"",
+        ""modules"": [
+          {
+            ""slug"": ""settings"",
+            ""name"": ""settings"",
+            ""permissions"": {
+              ""create"": true,
+              ""view"": true,
+              ""update"": true,
+              ""delete"": true
+            }
+          }
+        ]
+      },
+      ""error"": null
+    }
+  }
+}"			
+getAllRoles	Query	"query {
+  listAllRoles {
+    status
+    message
+    statusCode
+    data
+    error
+  }
+}"	"{
+  ""data"": {
+    ""listAllRoles"": {
+      ""status"": ""success"",
+      ""message"": ""Roles fetched successfully"",
+      ""statusCode"": 200,
+      ""data"": [
+        {
+          ""_id"": ""689d628e70418e123ef3c7f1"",
+          ""roleName"": ""Super Admin"",
+          ""roleslug"": ""superadmin"",
+          ""description"": null,
+          ""modules"": [
+            {
+              ""slug"": ""dashboard"",
+              ""name"": ""Dashboard"",
+              ""permissions"": {
+                ""create"": true,
+                ""view"": true,
+                ""update"": true,
+                ""delete"": true
+              }
+            },
+            {
+              ""slug"": ""user_management"",
+              ""name"": ""User Management"",
+              ""permissions"": {
+                ""create"": true,
+                ""view"": true,
+                ""update"": true,
+                ""delete"": true
+              }
+            },
+            {
+              ""slug"": ""assessment_engine"",
+              ""name"": ""Assessment Engine"",
+              ""permissions"": {
+                ""create"": true,
+                ""view"": true,
+                ""update"": true,
+                ""delete"": true
+              }
+            },
+            {
+              ""slug"": ""assessment_list"",
+              ""name"": ""Assessment List"",
+              ""permissions"": {
+                ""create"": true,
+                ""view"": true,
+                ""update"": true,
+                ""delete"": true
+              }
+            },
+            {
+              ""slug"": ""settings"",
+              ""name"": ""Settings"",
+              ""permissions"": {
+                ""create"": true,
+                ""view"": true,
+                ""update"": true,
+                ""delete"": true
+              }
+            }
+          ],
+          ""createdAt"": ""2025-08-14T04:14:06.485Z"",
+          ""updatedAt"": ""2025-08-23T13:16:34.134Z""
+        },
+        {
+          ""_id"": ""689d628e70418e123ef3c7f4"",
+          ""roleName"": ""Admin"",
+          ""roleslug"": ""admin"",
+          ""description"": null,
+          ""modules"": [
+            {
+              ""slug"": ""dashboard"",
+              ""name"": ""Dashboard"",
+              ""permissions"": {
+                ""create"": true,
+                ""view"": true,
+                ""update"": true,
+                ""delete"": true
+              }
+            },
+            {
+              ""slug"": ""user_management"",
+              ""name"": ""User Management"",
+              ""permissions"": {
+                ""create"": true,
+                ""view"": true,
+                ""update"": true,
+                ""delete"": true
+              }
+            },
+            {
+              ""slug"": ""assessment_engine"",
+              ""name"": ""Assessment Engine"",
+              ""permissions"": {
+                ""create"": true,
+                ""view"": true,
+                ""update"": true,
+                ""delete"": true
+              }
+            },
+            {
+              ""slug"": ""assessment_list"",
+              ""name"": ""Assessment List"",
+              ""permissions"": {
+                ""create"": true,
+                ""view"": true,
+                ""update"": true,
+                ""delete"": true
+              }
+            },
+            {
+              ""slug"": ""settings"",
+              ""name"": ""Settings"",
+              ""permissions"": {
+                ""create"": true,
+                ""view"": true,
+                ""update"": true,
+                ""delete"": true
+              }
+            }
+          ],
+          ""createdAt"": ""2025-08-14T04:14:06.570Z"",
+          ""updatedAt"": ""2025-08-23T12:51:28.790Z""
+        },
+        {
+          ""_id"": ""689d628e70418e123ef3c7f7"",
+          ""roleName"": ""User"",
+          ""roleslug"": ""user"",
+          ""description"": null,
+          ""modules"": [
+            {
+              ""slug"": ""dashboard"",
+              ""name"": ""Dashboard"",
+              ""permissions"": {
+                ""create"": true,
+                ""view"": true,
+                ""update"": true,
+                ""delete"": true
+              }
+            },
+            {
+              ""slug"": ""assessment_list"",
+              ""name"": ""Assessment List"",
+              ""permissions"": {
+                ""create"": true,
+                ""view"": true,
+                ""update"": true,
+                ""delete"": true
+              }
+            },
+            {
+              ""slug"": ""settings"",
+              ""name"": ""Settings"",
+              ""permissions"": {
+                ""create"": true,
+                ""view"": true,
+                ""update"": true,
+                ""delete"": true
+              }
+            }
+          ],
+          ""createdAt"": ""2025-08-14T04:14:06.649Z"",
+          ""updatedAt"": ""2025-08-23T12:51:28.860Z""
+        },
+        {
+          ""_id"": ""68a9bba0e69dcf3f773fed64"",
+          ""roleName"": ""hospital"",
+          ""roleslug"": ""hospital"",
+          ""description"": null,
+          ""modules"": [],
+          ""createdAt"": ""2025-08-23T13:01:20.926Z"",
+          ""updatedAt"": ""2025-08-23T13:01:20.926Z""
+        }
+      ],
+      ""error"": null
+    }
+  }
+}"			
+UpdateRole	Mutation	"mutation UpdateRole {
+  updateRole(input: {
+    roleId: ""68a9bba0e69dcf3f773fed64"",
+    roleName: ""Hospital Update"",
+    description: ""Limited access role""
+  }) {
+    status
+    message
+    statusCode
+    data
+    error
+  }
+}"	"{
+  ""data"": {
+    ""updateRole"": {
+      ""status"": ""success"",
+      ""message"": ""Role updated successfully"",
+      ""statusCode"": 200,
+      ""data"": {
+        ""_id"": ""68a9bba0e69dcf3f773fed64"",
+        ""roleName"": ""Hospital Update"",
+        ""roleslug"": ""hospitalupdate"",
+        ""description"": ""Limited access role"",
+        ""modules"": [],
+        ""updatedAt"": ""2025-08-23T14:09:07.340Z""
+      },
+      ""error"": null
+    }
+  }
+}"			
+DeleteRole	Mutation	"mutation DeleteRole {
+  deleteRole(roleId: ""68a9bba0e69dcf3f773fed64"") {
+    status
+    message
+    statusCode
+    data
+    error
+  }
+}
+"	"{
+  ""data"": {
+    ""deleteRole"": {
+      ""status"": ""success"",
+      ""message"": ""Role deleted successfully"",
+      ""statusCode"": 200,
+      ""data"": {
+        ""_id"": ""68a9bba0e69dcf3f773fed64"",
+        ""roleName"": ""Hospital Update"",
+        ""roleslug"": ""hospitalupdate""
+      },
+      ""error"": null
+    }
+  }
+}"			
+getRole	Query	"query {
+  getRole(identifier: ""SuperAdmin"") {
+    status
+    message
+    statusCode
+    data
+    error
+  }
+}"	"{
+  ""data"": {
+    ""getRole"": {
+      ""status"": ""success"",
+      ""message"": ""Role retrieved successfully"",
+      ""statusCode"": 200,
+      ""data"": {
+        ""_id"": ""689d628e70418e123ef3c7f1"",
+        ""roleName"": ""Super Admin"",
+        ""roleslug"": ""superadmin"",
+        ""modules"": [
+          {
+            ""slug"": ""dashboard"",
+            ""name"": ""Dashboard"",
+            ""permissions"": {
+              ""create"": true,
+              ""view"": true,
+              ""update"": true,
+              ""delete"": true
+            }
+          },
+          {
+            ""slug"": ""user_management"",
+            ""name"": ""User Management"",
+            ""permissions"": {
+              ""create"": true,
+              ""view"": true,
+              ""update"": true,
+              ""delete"": true 
+            }
+          },
+          {
+            ""slug"": ""assessment_engine"",
+            ""name"": ""Assessment Engine"",
+            ""permissions"": {
+              ""create"": true,
+              ""view"": true,
+              ""update"": true,
+              ""delete"": true
+            }
+          },
+          {
+            ""slug"": ""assessment_list"",
+            ""name"": ""Assessment List"",
+            ""permissions"": {
+              ""create"": true,
+              ""view"": true,
+              ""update"": true,
+              ""delete"": true
+            }
+          },
+          {
+            ""slug"": ""settings"",
+            ""name"": ""Settings"",
+            ""permissions"": {
+              ""create"": true,
+              ""view"": true,
+              ""update"": true,
+              ""delete"": true
+            }
+          },
+          {
+            ""slug"": ""audit_logs"",
+            ""name"": ""Audit Logs"",
+            ""permissions"": {
+              ""create"": true,
+              ""view"": true,
+              ""update"": true,
+              ""delete"": true
+            }
+          }
+        ],
+        ""createdAt"": ""2025-08-14T04:14:06.485Z"",
+        ""updatedAt"": ""2025-08-23T14:16:57.696Z"",
+        ""__v"": 3
+      },
+      ""error"": null
+    }
+  }
+}"			
+getRoleById	Query	"query {
+  getRoleById(roleId: ""689d628e70418e123ef3c7f4"") {
+    status
+    message
+    statusCode
+    data
+  }
+}"	"{
+  ""data"": {
+    ""getRoleById"": {
+      ""status"": ""success"",
+      ""message"": ""Role retrieved successfully"",
+      ""statusCode"": 200,
+      ""data"": {
+        ""_id"": ""689d628e70418e123ef3c7f4"",
+        ""roleName"": ""Admin"",
+        ""roleslug"": ""admin"",
+        ""modules"": [
+          {
+            ""slug"": ""dashboard"",
+            ""name"": ""Dashboard"",
+            ""permissions"": {
+              ""create"": true,
+              ""view"": true,
+              ""update"": true,
+              ""delete"": true
+            }
+          },
+          {
+            ""slug"": ""user_management"",
+            ""name"": ""User Management"",
+            ""permissions"": {
+              ""create"": true,
+              ""view"": true,
+              ""update"": true,
+              ""delete"": true
+            }
+          },
+          {
+            ""slug"": ""assessment_engine"",
+            ""name"": ""Assessment Engine"",
+            ""permissions"": {
+              ""create"": true,
+              ""view"": true,
+              ""update"": true,
+              ""delete"": true
+            }
+          },
+          {
+            ""slug"": ""assessment_list"",
+            ""name"": ""Assessment List"",
+            ""permissions"": {
+              ""create"": true,
+              ""view"": true,
+              ""update"": true,
+              ""delete"": true
+            }
+          },
+          {
+            ""slug"": ""settings"",
+            ""name"": ""Settings"",
+            ""permissions"": {
+              ""create"": true,
+              ""view"": true,
+              ""update"": true,
+              ""delete"": true
+            }
+          }
+        ],
+        ""createdAt"": ""2025-08-14T04:14:06.570Z"",
+        ""updatedAt"": ""2025-08-23T14:29:01.172Z"",
+        ""__v"": 1
+      }
+    }
+  }
+}"  the below is the  api which i will call 	 during verifyOTP query {
+  getByRole {
+    status
+    message
+    data
+    error
+  }
+}
+{
+  "data": {
+    "getByRole": {
+      "status": "success",
+      "message": "Role retrieved successfully",
+      "data": {
+        "_id": "689d628e70418e123ef3c7f7",
+        "roleName": "User",
+        "roleslug": "user",
+        "modules": [
+          {
+            "slug": "dashboard",
+            "name": "Dashboard",
+            "permissions": {
+              "create": true,
+              "view": true,
+              "update": true,
+              "delete": true
+            }
+          },
+          {
+            "slug": "assessment_list",
+            "name": "Assessment List",
+            "permissions": {
+              "create": true,
+              "view": true,
+              "update": true,
+              "delete": true
+            }
+          },
+          {
+            "slug": "settings",
+            "name": "Settings",
+            "permissions": {
+              "create": true,
+              "view": true,
+              "update": true,
+              "delete": true
+            }
+          },
+          {
+            "slug": "user_management",
+            "name": "User Management",
+            "permissions": {
+              "create": true,
+              "view": true,
+              "update": true,
+              "delete": true
+            }
+          }
+        ],
+        "createdAt": "2025-08-14T04:14:06.649Z",
+        "updatedAt": "2025-09-23T13:35:56.594Z",
+        "__v": 11,
+        "description": "Hospital Director"
+      },
+      "error": null
+    }
+  }
+} so now give me rbac worflow for above based on current project working , create files , and give everything so that i can easily put it in my project	 	   

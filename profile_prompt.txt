@@ -1,0 +1,84 @@
+Implement the exact same Account Settings page UI as shown in the reference image — including the same sidebar, top navigation bar, and overall layout style — but with the following modifications:
+
+🔧 Required Changes
+
+Top Right Button
+
+Replace the “Save Changes” button with a primary blue button labeled “Edit Profile”.
+
+Use the same button size, style, and position.
+
+Remove Sections
+----------------
+
+Completely remove the “Change Password” and “Two-Factor Authentication” cards.
+
+Personal Information Card
+----------------------------
+
+Keep the same card styling and alignment.
+
+Replace “First Name” and “Last Name” with a single “Full Name” input field (full width, single line).
+
+Retain Email Address and Phone Number fields exactly as they are.
+
+Keep the profile image on the right with the small camera icon overlay for edit.
+
+refer sign up page for input reference.
+
+Facility Information Card
+-----------------------------------
+
+Keep the same layout, font, and icon style.
+
+Keep existing fields:
+
+Facility Name
+
+Facility Type
+
+County
+
+State
+
+Add two new fields below in the same grid style:
+
+Service Lines
+
+No. of Beds
+
+All fields should align perfectly with the rest, same font and spacing.
+
+Notification Preferences Card
+------------------------------
+
+Keep the same style and heading.
+
+Remove “Assessment Result Availability”.
+
+Keep only one toggle: “Assessment Deadline Reminders”, aligned to the left with its blue toggle switch on.
+
+Help & Support Card
+----------------------
+
+Keep it exactly the same as shown in the image:
+
+Title: “Help & Support”
+
+Two rows:
+
+Phone: (254) 408 486 3232
+
+Email: support@companyname.com
+
+Include the same icons and light background tone.
+
+Position and style should match perfectly with the notification card on the left.
+
+Layout Order
+
+First row: Personal Information (left, larger card) and Facility Information (right).
+
+Second row: Notification Preferences (left) and Help & Support (right).
+
+Match the spacing, corner radius, and elevation exactly as in the reference design.

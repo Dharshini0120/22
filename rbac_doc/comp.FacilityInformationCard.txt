@@ -1,0 +1,186 @@
+import * as React from 'react';
+import { Box, Card, CardContent, Typography } from '@mui/material';
+
+// Icons (alias to match your names)
+import BusinessIcon from '@mui/icons-material/Business';
+import LocationIcon from '@mui/icons-material/LocationOn';
+import HospitalIcon from '@mui/icons-material/LocalHospital';
+import ServiceIcon from '@mui/icons-material/MedicalServices';
+import BedIcon from '@mui/icons-material/Hotel';
+
+type FacilityFormData = {
+  facilityName: string;
+  county: string;
+  facilityType: string;
+  state: string;
+  serviceLines: string;       // e.g., "Emergency Medicine, Cardiology"
+  numberOfBeds: string | number;
+};
+
+export default function FacilityInformationCard({
+  formData,
+}: {
+  formData: FacilityFormData;
+}) {
+  // fixed-width icon wrapper so text starts at the same x-position everywhere
+  const IconBox = ({ children }: { children: React.ReactNode }) => (
+    <Box sx={{ width: 24, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
+      {children}
+    </Box>
+  );
+
+  // left/right cell base styles (same alignment for both)
+  const cellSx = {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 2,
+    minWidth: 0,
+  } as const;
+
+  // extra left padding for the right column so content doesn't touch the center divider
+  const rightCellPad = { pl: 4 } as const;
+
+  // a single row with the vertical divider in the middle
+  const Row = ({ left, right }: { left: React.ReactNode; right: React.ReactNode }) => (
+    <Box sx={{ display: 'flex', gap: 1, width: '100%', position: 'relative' }}>
+      {/* Vertical Divider */}
+      <Box
+        sx={{
+          position: 'absolute',
+          left: '50%',
+          top: 0,
+          bottom: 0,
+          width: '1px',
+          backgroundColor: '#e4e5e7',
+          transform: 'translateX(-50%)',
+        }}
+      />
+      {left}
+      {right}
+    </Box>
+  );
+
+  // label+value block with vertical line
+  const LabelValue = ({
+    label,
+    value,
+  }: {
+    label: string;
+    value: React.ReactNode;
+  }) => (
+    <Box sx={{ minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
+      {/* Vertical line */}
+      <Box sx={{ 
+        height: 35, 
+        width: 1.1, 
+        bgcolor: '#b0b0b0', 
+        flexShrink: 0 
+      }} />
+      <Box sx={{ minWidth: 0, flex: 1 }}>
+        <Typography
+          variant="body2"
+          fontFamily={'var(--font-inter), sans-serif'}
+          sx={{ color: '#9ca3af', fontSize: '16px', fontWeight: 500, mb: 0.5 }}
+        >
+          {label}
+        </Typography>
+        <Typography
+          variant="body1"
+          fontFamily={'var(--font-inter), sans-serif'}
+          sx={{ color: '#1a1a1a', fontSize: '16px', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+        >
+          {value}
+        </Typography>
+      </Box>
+    </Box>
+  );
+
+  return (
+    <Box sx={{ flex: 2 }}>
+      <Card
+        sx={{
+          borderRadius: '12px',
+          border: '1px solid #e4e5e7',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <CardContent sx={{ p: 3, flex: 1, display: 'flex', flexDirection: 'column' }}>
+          <Typography
+            variant="h6"
+            fontWeight={600}
+            fontFamily={'var(--font-inter), sans-serif'}
+            sx={{ mb: 3, color: '#1a1a1a' }}
+          >
+            Facility Information
+          </Typography>
+
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, flex: 1 }}>
+            {/* Row 1 */}
+            <Row
+              left={
+                <Box sx={cellSx}>
+                  <IconBox>
+                    <BusinessIcon sx={{ color: '#9ca3af', fontSize: 20 }} />
+                  </IconBox>
+                  <LabelValue label="Facility Name" value={formData.facilityName} />
+                </Box>
+              }
+              right={
+                <Box sx={{ ...cellSx, ...rightCellPad }}>
+                  <IconBox>
+                    <LocationIcon sx={{ color: '#9ca3af', fontSize: 20 }} />
+                  </IconBox>
+                  <LabelValue label="County" value={formData.county} />
+                </Box>
+              }
+            />
+
+            {/* Row 2 */}
+            <Row
+              left={
+                <Box sx={cellSx}>
+                  <IconBox>
+                    <HospitalIcon sx={{ color: '#9ca3af', fontSize: 20 }} />
+                  </IconBox>
+                  <LabelValue label="Facility Type" value={formData.facilityType} />
+                </Box>
+              }
+              right={
+                <Box sx={{ ...cellSx, ...rightCellPad }}>
+                  <IconBox>
+                    <LocationIcon sx={{ color: '#9ca3af', fontSize: 20 }} />
+                  </IconBox>
+                  <LabelValue label="State" value={formData.state} />
+                </Box>
+              }
+            />
+
+            {/* Row 3 */}
+            <Row
+              left={
+                <Box sx={cellSx}>
+                  <IconBox>
+                    <ServiceIcon sx={{ color: '#9ca3af', fontSize: 20 }} />
+                  </IconBox>
+                  <LabelValue label="Service Lines" value={formData.serviceLines} />
+                </Box>
+              }
+              right={
+                <Box sx={{ ...cellSx, ...rightCellPad }}>
+                  <IconBox>
+                    <BedIcon sx={{ color: '#9ca3af', fontSize: 20 }} />
+                  </IconBox>
+                  <LabelValue label="No. of Beds" value={formData.numberOfBeds} />
+                </Box>
+              }
+            />
+          </Box>
+        </CardContent>
+      </Card>
+    </Box>
+  );
+}

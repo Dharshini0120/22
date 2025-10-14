@@ -1,0 +1,108 @@
+I'll examine how the roleSlice is handled in the codebase to show you the pattern.
+
+
+[1 tool called]
+
+Now let me check how the roleSlice is used in the OTP verification page to see the complete pattern:
+
+
+[2 tools called]
+
+Let me also check how the roleSlice is integrated into the store:
+
+
+[2 tools called]
+
+Now let me check how the roleSlice is used in components:
+
+
+[2 tools called]
+
+## 📋 **How roleSlice is Handled - Complete Pattern**
+
+Here's how the `roleSlice` is implemented and used throughout the admin portal:
+
+### **🏗️ 1. RoleSlice Structure (`roleSlice.ts`)**
+
+```typescript
+interface RoleState {
+  roleData: RoleData | null;
+  loading: boolean;
+  error: string | null;
+}
+
+const roleSlice = createSlice({
+  name: 'role',
+  initialState,
+  reducers: {
+    setRoleLoading: (state, action: PayloadAction<boolean>) => { ... },
+    setRoleData: (state, action: PayloadAction<RoleData>) => { ... },
+    setRoleError: (state, action: PayloadAction<string>) => { ... },
+    clearRoleData: (state) => { ... },
+    initializeRole: (state) => { ... },
+  },
+});
+```
+
+### **🔧 2. Key Features:**
+
+- **SessionStorage Persistence**: Automatically saves/restores role data
+- **Loading States**: Tracks loading status during API calls
+- **Error Handling**: Manages error states
+- **Initialization**: Restores data from sessionStorage on app load
+
+### **🏪 3. Store Integration (`store.ts`)**
+
+```typescript
+export const store = configureStore({
+  reducer: {
+    auth: authReducer,
+    role: roleReducer,        // ← Role slice integrated
+    assessment: assessmentReducer,
+    template: templateReducer,
+  },
+});
+```
+
+### **📡 4. API Integration (OTP Verification)**
+
+```typescript
+// Fetch role data after successful OTP verification
+const roleResponse = await getByRoleService(roleId);
+if (roleResponse.data.getByRole.status === 'success') {
+  const roleData = roleResponse.data.getByRole.data;
+  
+  // Store in Redux using action type
+  dispatch({ type: "role/setRoleData", payload: roleData });
+} else {
+  dispatch({ type: "role/setRoleError", payload: "Failed to fetch role data" });
+}
+```
+
+### **🎯 5. Component Usage**
+
+```typescript
+// In DashboardLayout.tsx
+const roleSlug = useSelector((state: RootState) => state.role.roleData?.roleslug);
+
+// In Assessment page
+const roleData = useSelector((state: RootState) => state.role.roleData);
+```
+
+### **💡 6. Key Differences from userSlice:**
+
+| Feature | roleSlice | userSlice |
+|---------|-----------|-----------|
+| **Persistence** | sessionStorage | Redux Persist |
+| **API Integration** | Direct dispatch with action types | Async thunks (`getUser()`) |
+| **Data Structure** | Role permissions & modules | User profile data |
+| **Usage Pattern** | Action type dispatch | Async thunk dispatch |
+
+### **🔄 7. Complete Flow:**
+
+1. **OTP Verification** → Fetch role data → `dispatch({ type: "role/setRoleData", payload })`
+2. **SessionStorage** → Automatically persisted/restored
+3. **Components** → `useSelector` to access role data
+4. **Navigation** → Role-based menu rendering using `roleSlug`
+
+The roleSlice follows a **simpler pattern** compared to userSlice - it uses direct action dispatch instead of async thunks, and sessionStorage instead of Redux Persist for data persistence.

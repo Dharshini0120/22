@@ -1,0 +1,439 @@
+import React, { useState } from 'react';
+// import { Link } from 'react-router-dom';
+import {
+  CButton,
+  CCard,
+  CCardBody,
+  CCol,
+  CContainer,
+  CForm,
+  CFormInput,
+  CInputGroup,
+  CInputGroupText,
+  CPopover,
+  CRow,
+} from '@coreui/react';
+// import loginlogo from '../../../assets/images/right-column.svg';
+// import loginlogo from '../../../assets/images/Logo-and-Image.svg';
+import { resettedPassword } from 'src/services/restPasswordAPI/resetPassword';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useDispatch } from 'react-redux';
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+import { LOGIN } from 'src/utils/constant';
+import LoginPageFooter from 'src/components/PageLayout/LoginPageFooter';
+import RemoveRedEyeIcon from '@mui/icons-material/RemoveRedEye';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
+
+const GenericUtils = require('../../../utils/generic_utils');
+
+
+const Setpassword = () => {
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [confirmPasswordError, setConfirmPasswordError] = useState('');
+  const location = useLocation();
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
+  const [showPassword, setShowPassword] = useState(false);
+  const [showRepeatPassword, setShowRepeatPassword] = useState(false);
+  const [visiblePopover, setVisiblePopover] = useState(false);
+  // const backgroundImageStyle = {
+  //   backgroundImage: `url(${loginlogo})`,
+  //   backgroundSize: 'cover',
+  //   backgroundRepeat: 'no-repeat',
+  //   // backgroundPosition: 'center',
+  // };
+  const validatePassword = () => {
+    const x = GenericUtils.isValidPassword(password);
+    setPasswordError(x);
+    return x;
+  };
+
+  console.log('confirmPasswordError', confirmPasswordError);
+
+  const togglePasswordVisibility = () => {
+    setShowPassword(!showPassword);
+  };
+
+  const toggleRepeatPasswordVisibility = () => {
+    setShowRepeatPassword(!showRepeatPassword);
+  };
+
+  const validateConfirmPassword = () => {
+    let errorMsg = '';
+    if (confirmPassword !== password) {
+      errorMsg = 'Passwords do not match';
+    }
+    setConfirmPasswordError(errorMsg);
+    return errorMsg;
+  };
+
+  const handleResetPassword = () => {
+    // Validate password and confirm password before proceeding
+    const isValidPassword = validatePassword();
+    const isValidPasswordConfirm = validateConfirmPassword();
+
+    // If both password and confirm password are valid, proceed with the reset password logic
+    if (isValidPassword == '' && isValidPasswordConfirm == '') {
+      if (password !== '' && confirmPassword !== '') {
+        let payload = {
+          email: location.search.split('=')[1],
+          newpassword: password,
+          confirmpassword: confirmPassword,
+        };
+        dispatch(resettedPassword(payload))
+          .then((res) => {
+            if (res.payload.isSuccess == true) {
+              toast.success(res.payload.message, {
+                toastId: 'customId',
+                position: 'top-right',
+                autoClose: 1000,
+                hideProgressBar: true,
+                closeOnClick: true,
+                pauseOnHover: false,
+                draggable: true,
+                progress: undefined,
+                theme: 'light',
+              });
+
+              setTimeout(() => {
+                navigate('/login');
+              });
+            } else {
+              toast.error(res.payload.message, {
+                toastId: 'customId',
+                position: 'top-right',
+                autoClose: 1000,
+                hideProgressBar: true,
+                closeOnClick: true,
+                pauseOnHover: false,
+                draggable: true,
+                progress: undefined,
+                theme: 'light',
+              });
+            }
+            //   toast.error(res.error.message, {
+            //     position: "top-right",
+            //     autoClose: 1000,
+            //     theme: "light",
+            // })
+          })
+          .catch((err) => {
+            console.error(err);
+          });
+
+        // Your reset password logic goes here
+        // console.log('Password reset successful');
+      }
+    }
+  };
+
+  //   const [password, setPassword] = useState('');
+  // const [passwordError, setPasswordError] = useState('');
+  const [passwordRules, setPasswordRules] = useState({
+    minLength: false,
+    uppercase: false,
+    lowercase: false,
+    digit: false,
+    specialChar: false,
+  });
+
+  const validatePasswordStructure = (value) => {
+    const minLength = value.length >= 8;
+    const uppercase = /[A-Z]/.test(value);
+    const lowercase = /[a-z]/.test(value);
+    const digit = /\d/.test(value);
+    const specialChar = /[!@#$%^&*(),.?":{}|<>]/.test(value);
+
+    setPasswordRules({ minLength, uppercase, lowercase, digit, specialChar });
+
+    if (!value) return 'Password is required';
+    if (!minLength) return 'Password must be at least 8 characters long';
+    if (!uppercase)
+      return 'Password must contain at least one uppercase letter';
+    if (!lowercase)
+      return 'Password must contain at least one lowercase letter';
+    if (!digit) return 'Password must contain at least one digit';
+    if (!specialChar)
+      return 'Password must contain at least one special character';
+
+    return '';
+  };
+
+  const handlePasswordChange = (e) => {
+    const value = e.target.value;
+    setPassword(value);
+    const error = validatePasswordStructure(value);
+    // setPasswordError(error);
+  };
+
+  console.log('pass', password, confirmPassword);
+
+  return (
+    <div className="bg-white">
+      <ToastContainer />
+      <CContainer fluid className="h-100">
+        <CRow className="h-100">
+          <CCol
+            md={6}
+            lg={7}
+            xl={8}
+            className="text-white custom-height login-page-lg first-column"
+            // style={{ ...backgroundImageStyle, height: '100vh' }}
+          ></CCol>
+          <CCol
+            md={6}
+            lg={5}
+            xl={4}
+            className="second-column signinportion d-flex flex-column justify-content-between"
+          >
+            <div className="signin-div">
+              <CCard className="signinblock" style={{ border: 'none' }}>
+                <CCardBody className="logincard_body">
+                  <div>
+                    <CForm>
+                      <h2>Set Password</h2>
+                      <p className="text-body-secondary mb-4">
+                        Create a new password for your account
+                      </p>
+                      <div className="mb-4 input-field-login">
+                        <CPopover
+                          content={
+                            <div style={{ padding: '5px' }}>
+                              <div
+                                style={{
+                                  marginBottom: '5px',
+                                  color: 'grey',
+                                  fontWeight: 'bold',
+                                }}
+                              >
+                                Password must have
+                              </div>
+                              <ul className="password-rules">
+                                <li>
+                                  <span
+                                    className={
+                                      passwordRules.minLength
+                                        ? 'text-success'
+                                        : 'text-danger'
+                                    }
+                                  >
+                                    {passwordRules.minLength ? '✔' : '✖'}
+                                  </span>{' '}
+                                  At least 8 characters
+                                </li>
+                                <li>
+                                  <span
+                                    className={
+                                      passwordRules.uppercase
+                                        ? 'text-success'
+                                        : 'text-danger'
+                                    }
+                                  >
+                                    {passwordRules.uppercase ? '✔' : '✖'}
+                                  </span>{' '}
+                                  At least one uppercase letter
+                                </li>
+                                <li>
+                                  <span
+                                    className={
+                                      passwordRules.lowercase
+                                        ? 'text-success'
+                                        : 'text-danger'
+                                    }
+                                  >
+                                    {passwordRules.lowercase ? '✔' : '✖'}
+                                  </span>{' '}
+                                  At least one lowercase letter
+                                </li>
+                                <li>
+                                  <span
+                                    className={
+                                      passwordRules.digit
+                                        ? 'text-success'
+                                        : 'text-danger'
+                                    }
+                                  >
+                                    {passwordRules.digit ? '✔' : '✖'}
+                                  </span>{' '}
+                                  At least one digit
+                                </li>
+                                <li>
+                                  <span
+                                    className={
+                                      passwordRules.specialChar
+                                        ? 'text-success'
+                                        : 'text-danger'
+                                    }
+                                  >
+                                    {passwordRules.specialChar ? '✔' : '✖'}
+                                  </span>{' '}
+                                  At least one special character
+                                </li>
+                              </ul>
+                            </div>
+                          }
+                          placement="left"
+                          visible={visiblePopover}
+                          onHide={() => setVisiblePopover(false)}
+                          trigger="manual"
+                        >
+                          <CInputGroup className="mb-1 passwordlog input-field-login">
+                            <CFormInput
+                              type={showPassword ? 'text' : 'password'}
+                              sx={{ letterSpacing: '1px' }}
+                              placeholder="Enter your Password"
+                              id="password"
+                              className={`signinform ${
+                                passwordError ? 'is-invalid' : ''
+                              }`}
+                              value={password}
+                              onChange={handlePasswordChange}
+                              // onChange={(e) => setPassword(e.target.value)}
+                              // onBlur={validatePassword}
+                              onFocus={() => setVisiblePopover(true)}
+                              onBlur={() => {
+                                setVisiblePopover(false);
+                                validatePassword();
+                              }}
+                            />
+                            <CInputGroupText
+                              className="password-toggle"
+                              onClick={() => togglePasswordVisibility()}
+                            >
+                              {showPassword ? (
+                                <RemoveRedEyeIcon />
+                              ) : (
+                                <VisibilityOffIcon />
+                              )}
+                            </CInputGroupText>
+                          </CInputGroup>
+                        </CPopover>
+                        {passwordError && (
+                          <div className="invalid-feedback d-block">
+                            {passwordError}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mb-4 input-field-login">
+                        <CInputGroup className="mb-1 passwordlog input-field-login">
+                          <CFormInput
+                            type={showRepeatPassword ? 'text' : 'password'}
+                            sx={{ letterSpacing: '1px' }}
+                            placeholder="Re-enter your Password"
+                            id="confirmPassword"
+                            className={`signinform ${
+                              confirmPasswordError ? 'is-invalid' : ''
+                            }`}
+                            value={confirmPassword}
+                            onChange={(e) => setConfirmPassword(e.target.value)}
+                            onBlur={validateConfirmPassword}
+                          />
+                          <CInputGroupText
+                            className="password-toggle"
+                            onClick={() => toggleRepeatPasswordVisibility()}
+                          >
+                            {showRepeatPassword ? (
+                              <RemoveRedEyeIcon />
+                            ) : (
+                              <VisibilityOffIcon />
+                            )}
+                          </CInputGroupText>
+                        </CInputGroup>
+
+                        {confirmPasswordError && (
+                          <div className="invalid-feedback d-block">
+                            {confirmPasswordError}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Password Rules */}
+                      {/* <ul className="password-rules mb-4">
+                        <li>
+                          <span
+                            className={
+                              passwordRules.minLength
+                                ? 'text-success'
+                                : 'text-danger'
+                            }
+                          >
+                            {passwordRules.minLength ? '✔' : '✖'}
+                          </span>{' '}
+                          At least 8 characters
+                        </li>
+                        <li>
+                          <span
+                            className={
+                              passwordRules.uppercase
+                                ? 'text-success'
+                                : 'text-danger'
+                            }
+                          >
+                            {passwordRules.uppercase ? '✔' : '✖'}
+                          </span>{' '}
+                          At least one uppercase letter
+                        </li>
+                        <li>
+                          <span
+                            className={
+                              passwordRules.lowercase
+                                ? 'text-success'
+                                : 'text-danger'
+                            }
+                          >
+                            {passwordRules.lowercase ? '✔' : '✖'}
+                          </span>{' '}
+                          At least one lowercase letter
+                        </li>
+                        <li>
+                          <span
+                            className={
+                              passwordRules.digit
+                                ? 'text-success'
+                                : 'text-danger'
+                            }
+                          >
+                            {passwordRules.digit ? '✔' : '✖'}
+                          </span>{' '}
+                          At least one digit
+                        </li>
+                        <li>
+                          <span
+                            className={
+                              passwordRules.specialChar
+                                ? 'text-success'
+                                : 'text-danger'
+                            }
+                          >
+                            {passwordRules.specialChar ? '✔' : '✖'}
+                          </span>{' '}
+                          At least one special character
+                        </li>
+                      </ul> */}
+                      <div className="mb-4 input-field-login">
+                        <CButton
+                          style={{ backgroundColor: '#11b0ff', color: '#fff' }}
+                          className="signinform submitbtn"
+                          onClick={handleResetPassword}
+                        >
+                          Continue
+                        </CButton>
+                      </div>
+                    </CForm>
+                  </div>
+                </CCardBody>
+              </CCard>
+            </div>
+            <LoginPageFooter />
+          </CCol>
+        </CRow>
+      </CContainer>
+    </div>
+  );
+};
+
+export default Setpassword;

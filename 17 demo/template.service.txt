@@ -1,0 +1,449 @@
+import { gql } from '@apollo/client';
+
+export const GET_USERS_TEMPLATES_QUERY = gql`
+  query GetUsersTemplates {
+    usersTemplates {
+      assessment
+      scenarioVersions {
+        _id
+        version
+        status
+        isLatest
+        scenario {
+          _id
+          name
+        }
+        questionnaire
+        facilityandservicelines
+        createdAt
+        updatedAt
+      }
+      message
+    }
+  }
+`;
+
+export const LIST_USER_ASSESSMENTS_QUERY = gql`
+  query ListUserAssessments($page: Int!, $limit: Int!, $statusFilter: [AssessmentStatus!]) {
+    listUserAssessments(page: $page, limit: $limit, statusFilter: $statusFilter) {
+      assessments {
+        _id
+        sectionName
+        isUnlocked
+        overallProgress {
+          status
+        }
+        startedDate
+        completedDate
+        completedBy
+      }
+      pagination {
+        page
+        limit
+        total
+        totalPages
+        hasNext
+        hasPrev
+      }
+      message
+    }
+  }
+`;
+
+export const UPDATE_ASSESSMENT_MUTATION = gql`
+  mutation UpdateAssessment($assessmentId: String!, $input: JSON!) {
+    updateAssessment(assessmentId: $assessmentId, input: $input) {
+      status
+      message
+      statusCode
+      assessment
+      error
+    }
+  }
+`;
+export const GET_ASSESSMENT_QUERY = gql`
+  query GetAssessment($assessmentId: String, $sectionVersionId: String) {
+    getAssessment(assessmentId: $assessmentId, sectionVersionId: $sectionVersionId) {
+      status
+      message
+      statusCode
+      assessment {
+        assessmentId
+        userId
+        facilityId
+        service_id
+        sections {
+          sectionId
+          sectionIndex
+          sectionName
+          questionnaire
+          answers {
+            questionId
+            answer
+            answeredAt
+          }
+          progress {
+            currentQuestionIndex
+            totalQuestionsInSection
+            answeredQuestionsInSection
+            nextQuestionId
+            status
+          }
+        }
+        overallProgress {
+          currentSectionIndex
+          totalSections
+          overallProgress
+          totalQuestions
+          answeredQuestions
+          status
+        }
+      }
+      error
+    }
+  }
+`;
+
+export const GET_ASSESSMENT_EMPTY_QUERY = gql`
+  query GetAssessment {
+    getAssessment {
+      status
+      message
+      statusCode
+      assessment {
+        assessmentId
+        userId
+        facilityId
+        service_id
+        sections {
+          sectionId
+          sectionIndex
+          sectionName
+          questionnaire
+          answers {
+            questionId
+            answer
+            answeredAt
+          }
+          progress {
+            currentQuestionIndex
+            totalQuestionsInSection
+            answeredQuestionsInSection
+            nextQuestionId
+            status
+          }
+        }
+        overallProgress {
+          currentSectionIndex
+          totalSections
+          overallProgress
+          totalQuestions
+          answeredQuestions
+          status
+        }
+      }
+      error
+    }
+  }
+`;
+
+export const LIST_SECTIONS_QUERY = gql`
+  query ListSections {
+    listSections {
+      status
+      message
+      statusCode
+      sections {
+        sectionVersionId
+        sectionName
+        status
+        assessmentId
+      }
+      error
+    }
+  }
+`;
+// TypeScript interfaces
+export interface FacilityWithServicesInput {
+  facility_id: string;
+  services: string[];
+}
+
+// Keep the old interfaces for backward compatibility
+export interface FacilitiesInput {
+  facility_id: string;
+  services: string[];
+}
+
+export interface UserFacilityInput {
+  facility_id: string;
+  services: string[];
+}
+
+export interface FacilityInput {
+  facility_id: string;
+  services: string[];
+}
+
+export interface AssessmentProgress {
+  currentQuestionIndex: number;
+  totalQuestionsInSection: number;
+  answeredQuestionsInSection: number;
+}
+
+export interface AssessmentSection {
+  sectionVersionId: string;
+  answers: Answer[];
+  progress: AssessmentProgress;
+}
+
+
+export interface FullAssessment {
+  _id: string;
+  userId: string;
+  facilityId: string | null;
+  service_id: string[];
+  startedDate: string;
+  completedDate: string | null;
+  questionnaire: AssessmentSection[];
+  status: string;
+  overallProgress: OverallProgress;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  __v: number;
+}
+
+export interface ScenarioVersion {
+  _id: string;
+  version: string;
+  status: string;
+  isLatest: boolean;
+  scenario: {
+    _id: string;
+    name: string;
+  };
+  questionnaire: Record<string, unknown>;
+  facilityandservicelines: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GetUsersTemplatesResponse {
+  assessment: FullAssessment;
+  scenarioVersions: ScenarioVersion[];
+  message: string;
+}
+
+export interface GetUsersTemplatesData {
+  usersTemplates: GetUsersTemplatesResponse;
+}
+
+// Assessment status enum to match backend
+export enum AssessmentStatus {
+  IN_PROGRESS = 'inProgress',
+  COMPLETED = 'completed',
+  BLOCKED = 'blocked'
+}
+
+// New interfaces for assessments
+export interface Assessment {
+  _id: string;
+  sectionName: string;
+  isUnlocked: boolean;
+  overallProgress: {
+    status: string;
+  };
+  startedDate: string;
+  completedDate: string | null;
+  completedBy: string | null;
+}
+
+export interface Pagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrev: boolean;
+}
+
+export interface ListUserAssessmentsResponse {
+  assessments: Assessment[];
+  pagination: Pagination;
+  message: string;
+}
+
+export interface ListUserAssessmentsData {
+  listUserAssessments: ListUserAssessmentsResponse;
+}
+
+// Update Assessment interfaces
+export interface Answer {
+  questionId: string;
+  answer: any;
+  answeredAt: string;
+}
+
+export interface SectionProgress {
+  currentQuestionIndex: number;
+  totalQuestionsInSection: number;
+  answeredQuestionsInSection: number;
+  status: 'inProgress' | 'blocked' | 'completed'; // Move section status inside progress
+}
+
+export interface QuestionnaireSection {
+  sectionVersionId: string;
+  answers: Answer[];
+  progress: SectionProgress;
+}
+
+export interface OverallProgress {
+  currentSectionIndex: number;
+  totalSections: number;
+  overallProgress: number;
+  totalQuestions: number;
+  answeredQuestions: number;
+  status: 'inProgress' | 'blocked' | 'completed';
+}
+
+export interface UpdateAssessmentInput {
+  questionnaire: QuestionnaireSection[];
+  overallProgress: OverallProgress;
+}
+
+export interface UpdateAssessmentResponse {
+  status: string;
+  message: string;
+  statusCode: number;
+  assessment: Record<string, unknown>; // JSON type from backend
+  error: string | null;
+}
+
+export interface UpdateAssessmentData {
+  updateAssessment: UpdateAssessmentResponse;
+}
+
+// New interfaces for getAssessment
+export interface AssessmentQuestionnaire {
+  nodes: any[];
+  edges: any[];
+}
+ 
+export interface AssessmentSectionData {
+  sectionId: string;
+  sectionName: string;
+  sectionIndex: number;
+  questionnaire: AssessmentQuestionnaire;
+  answers: any[];
+  progress: {
+    currentQuestionIndex: number;
+    totalQuestionsInSection: number;
+    answeredQuestionsInSection: number;
+    nextQuestionId?: string | number;
+    status?: 'inProgress' | 'blocked' | 'completed';
+  };
+}
+ 
+export interface AssessmentOverallProgress {
+  currentSectionIndex: number;
+  totalSections: number;
+  overallProgress: number;
+  totalQuestions: number;
+  answeredQuestions: number;
+}
+ 
+export interface AssessmentData {
+  assessmentId: string;
+  userId: string;
+  facilityId: string;
+  service_id: string[];
+  sections: AssessmentSectionData[];
+  overallProgress: AssessmentOverallProgress;
+}
+ 
+
+export interface GetAssessmentResponse {
+  status: string;
+  message: string;
+  statusCode: number;
+  assessment: any; // JSON field - will be parsed
+  error: string | null;
+}
+ 
+export interface GetAssessmentData {
+  getAssessment: GetAssessmentResponse;
+}
+
+export interface Section {
+  sectionVersionId: string;
+  sectionName: string;
+  status: string;
+  assessmentId: string | null;
+}
+
+export interface ListSectionsResponse {
+  status: string;
+  message: string;
+  statusCode: number;
+  sections: Section[];
+  error: string | null;
+}
+
+export interface ListSectionsData {
+  listSections: ListSectionsResponse;
+}
+
+// Generate Assessment Report Mutation
+export const GENERATE_ASSESSMENT_REPORT = gql`
+  mutation GenerateAssessmentReport($input: GenerateReportInput!) {
+    generateAssessmentReport(input: $input) {
+      status
+      message
+      reportUrl
+      error
+    }
+  }
+`;
+
+export interface GenerateReportInput {
+  assessmentId: string;
+}
+
+export interface GenerateAssessmentReportResponse {
+  status: string;
+  message: string;
+  reportUrl: string;
+  error: string | null;
+}
+
+export interface GenerateAssessmentReportMutationData {
+  generateAssessmentReport: GenerateAssessmentReportResponse;
+}
+
+// Send Report Email Mutation
+export const SEND_REPORT_EMAIL = gql`
+  mutation SendReportEmail($input: SendReportEmailInput!) {
+    sendReportEmail(input: $input) {
+      status
+      message
+      error
+    }
+  }
+`;
+
+export interface SendReportEmailInput {
+  assessmentId: string;
+}
+
+export interface SendReportEmailResponse {
+  status: string;
+  message: string;
+  error: string | null;
+}
+
+export interface SendReportEmailMutationData {
+  sendReportEmail: SendReportEmailResponse;
+}
+
+

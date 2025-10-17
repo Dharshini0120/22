@@ -1,0 +1,1014 @@
+"use client";
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Box,
+  Typography,
+  Button,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Radio,
+  RadioGroup,
+  FormControlLabel,
+  FormControl,
+  Checkbox,
+  TextField,
+  Card,
+  CardContent,
+  CircularProgress,
+  Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions
+} from '@mui/material';
+import {
+  ExpandMore as ExpandMoreIcon,
+  Done as DoneIcon,
+  HourglassBottom as HourglassBottomIcon,
+  ArrowBack as ArrowBackIcon,
+  Info as InfoIcon
+} from '@mui/icons-material';
+import { useLazyQuery } from '@apollo/client';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useSelector, useDispatch } from 'react-redux';
+import { RootState } from '../../../store/store';
+import { setPaymentMetadata } from '../../../store/assessmentSlice';
+
+import DashboardLayout from '../../../components/layout/DashboardLayout';
+import { GET_ASSESSMENT_QUERY } from '../../../graphql/templates.service';
+
+interface Answer {
+  questionId: string;
+  answer: string | string[];
+  questionText: string;
+  questionType: string;
+  options?: string[];
+  isRequired?: boolean;
+}
+
+interface Section {
+  id: string;
+  name: string;
+  answers: Answer[];
+  isCompleted: boolean;
+  answeredCount?: number;
+  totalCount?: number;
+}
+
+interface AssessmentData {
+  assessmentId: string;
+  userId: string;
+  facilityId: string;
+  service_id: string[];
+  sections: {
+    sectionId: string;
+    sectionName: string;
+    sectionIndex: number;
+    questionnaire: {
+      nodes: Array<{
+        id: string;
+        type: string;
+        data: {
+          question: string;
+          questionType: string;
+          options: string[];
+          isRequired: boolean;
+          optionsData: Array<{
+            text: string;
+            score: string;
+            referralText: string;
+          }>;
+          benchmark?: {
+            leapfrog: boolean;
+            centralDB: boolean;
+          };
+        };
+      }>;
+    };
+    answers: Array<{
+      questionId: string;
+      answer: string | string[];
+      answeredAt: string;
+    }>;
+    progress: {
+      currentQuestionIndex: number;
+      totalQuestionsInSection: number;
+      answeredQuestionsInSection: number;
+      nextQuestionId?: string | number;
+      status?: 'inProgress' | 'blocked' | 'completed';
+    };
+  }[];
+  overallProgress: {
+    currentSectionIndex: number;
+    totalSections: number;
+    overallProgress: number;
+    totalQuestions: number;
+    answeredQuestions: number;
+    status: 'inProgress' | 'completed' | 'blocked';
+  };
+}
+
+interface GetAssessmentResponse {
+  getAssessment: {
+    status: string;
+    message: string;
+    statusCode: number;
+    assessment: AssessmentData;
+    error: string | null;
+  };
+}
+
+interface BenchmarkScore {
+  totalScore: number;
+  totalQuestions: number;
+  percentage: number;
+}
+
+const AssessmentSummary = () => {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const assessmentId = searchParams.get('id');
+  const dispatch = useDispatch();
+
+  // Get user information from Redux store
+  const { user } = useSelector((state: RootState) => state.auth);
+
+  const [sections, setSections] = useState<Section[]>([]);
+  const [expandedSection, setExpandedSection] = useState<string>('all');
+  const [assessmentData, setAssessmentData] = useState<AssessmentData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [leapfrogScore, setLeapfrogScore] = useState<BenchmarkScore>({ totalScore: 0, totalQuestions: 0, percentage: 0 });
+  const [cmsScore, setCmsScore] = useState<BenchmarkScore>({ totalScore: 0, totalQuestions: 0, percentage: 0 });
+  const [showUnlockDialog, setShowUnlockDialog] = useState(false);
+
+  // GraphQL query to fetch assessment data
+  const [getAssessment, { loading: queryLoading }] = useLazyQuery<GetAssessmentResponse>(
+    GET_ASSESSMENT_QUERY,
+    {
+      variables: { assessmentId },
+      fetchPolicy: 'cache-and-network',
+      onError: () => {
+        setLoading(false);
+      }
+    }
+  );
+
+  const transformQuestionnaireToAnswers = useCallback((nodes: Array<{
+    id: string;
+    data: {
+      question: string;
+      questionType: string;
+      options: string[];
+      isRequired: boolean;
+    };
+  }>, existingAnswers: Array<{
+    questionId: string;
+    answer: string | string[];
+  }>): Answer[] => {
+    const answers: Answer[] = [];
+    const answerMap = new Map();
+    existingAnswers.forEach(answer => {
+      answerMap.set(answer.questionId, answer.answer);
+    });
+
+    nodes.forEach((questionNode) => {
+      if (questionNode && questionNode.data && questionNode.data.question) {
+        const existingAnswer = answerMap.get(questionNode.id);
+
+        answers.push({
+          questionId: questionNode.id,
+          questionText: questionNode.data.question,
+          questionType: questionNode.data.questionType || 'text',
+          options: questionNode.data.options || [],
+          isRequired: questionNode.data.isRequired || false,
+          answer: existingAnswer || ''
+        });
+      }
+    });
+
+    return answers;
+  }, []);
+
+  const calculateBenchmarkScores = useCallback((assessmentData: AssessmentData) => {
+    let leapfrogTotal = 0;
+    let leapfrogMaxPossible = 0;
+    let cmsTotal = 0;
+    let cmsMaxPossible = 0;
+
+    assessmentData.sections.forEach(section => {
+      section.questionnaire.nodes.forEach(node => {
+        const benchmark = node.data.benchmark;
+        if (!benchmark) return;
+
+        // Calculate max possible score for this question (sum of all option scores)
+        let questionMaxScore = 0;
+        if (node.data.optionsData && Array.isArray(node.data.optionsData)) {
+          questionMaxScore = node.data.optionsData.reduce((sum, optionData) => {
+            const score = parseFloat(optionData.score) || 0;
+            return sum + score;
+          }, 0);
+          // Round to avoid floating point precision issues
+          questionMaxScore = Math.round(questionMaxScore * 1000000) / 1000000;
+        }
+
+        // Add to leapfrog max possible if applicable
+        if (benchmark.leapfrog) {
+          leapfrogMaxPossible += questionMaxScore;
+        }
+
+        // Add to CMS max possible if applicable
+        if (benchmark.centralDB) {
+          cmsMaxPossible += questionMaxScore;
+        }
+
+        // Find the answer for this question to calculate actual score
+        const answer = section.answers.find(ans => ans.questionId === node.id);
+        if (!answer || !answer.answer) return;
+
+        // Find the score for the selected option
+        const selectedOptionIndex = node.data.options.findIndex(option => option === answer.answer);
+        if (selectedOptionIndex === -1 || !node.data.optionsData[selectedOptionIndex]) return;
+
+        const score = parseFloat(node.data.optionsData[selectedOptionIndex].score) || 0;
+
+        // Add to leapfrog actual score if applicable
+        if (benchmark.leapfrog) {
+          leapfrogTotal += score;
+        }
+
+        // Add to CMS actual score if applicable
+        if (benchmark.centralDB) {
+          cmsTotal += score;
+        }
+      });
+    });
+
+    // Round final totals to avoid floating point precision issues
+    const roundedLeapfrogTotal = Math.round(leapfrogTotal * 1000000) / 1000000;
+    const roundedLeapfrogMax = Math.round(leapfrogMaxPossible * 1000000) / 1000000;
+    const roundedCmsTotal = Math.round(cmsTotal * 1000000) / 1000000;
+    const roundedCmsMax = Math.round(cmsMaxPossible * 1000000) / 1000000;
+
+    setLeapfrogScore({
+      totalScore: roundedLeapfrogTotal,
+      totalQuestions: roundedLeapfrogMax,
+      percentage: roundedLeapfrogMax > 0 ? (roundedLeapfrogTotal / roundedLeapfrogMax) * 100 : 0
+    });
+
+    setCmsScore({
+      totalScore: roundedCmsTotal,
+      totalQuestions: roundedCmsMax,
+      percentage: roundedCmsMax > 0 ? (roundedCmsTotal / roundedCmsMax) * 100 : 0
+    });
+  }, []);
+
+  const fetchAssessmentData = useCallback(() => {
+    (async () => {
+      try {
+        console.log('Starting fetchAssessmentData for assessmentId:', assessmentId);
+        setLoading(true);
+        const { data, error } = await getAssessment();
+        
+        if (error) {
+          return;
+        }
+        if (data?.getAssessment?.status === 'success' && data.getAssessment.assessment) {
+          const assessment = data.getAssessment.assessment;
+          console.log('Assessment data received:', assessment);
+
+          setAssessmentData(assessment);
+
+          // Calculate benchmark scores
+          calculateBenchmarkScores(assessment);
+
+          // Transform API data to match UI structure
+          const transformedSections = (assessment.sections || [])
+            .filter(section => section.questionnaire?.nodes && section.questionnaire.nodes.length > 0)
+            .map(section => {
+              const answers = transformQuestionnaireToAnswers(section.questionnaire.nodes, section.answers || []);
+
+              const answeredQuestions = answers.filter(answer =>
+                answer.answer &&
+                !(Array.isArray(answer.answer) && answer.answer.length === 0) &&
+                !(typeof answer.answer === 'string' && answer.answer.trim() === '')
+              ).length;
+
+              const totalQuestions = answers.length;
+              const isCompleted = totalQuestions > 0 && answeredQuestions === totalQuestions;
+
+              return {
+                id: section.sectionId || `section-${section.sectionIndex || 0}`,
+                name: section.sectionName || `Section ${(section.sectionIndex || 0) + 1}`,
+                isCompleted,
+                answers,
+                answeredCount: answeredQuestions,
+                totalCount: totalQuestions
+              };
+            })
+            .filter(section => section.answers.length > 0);
+          
+          console.log('Transformed sections:', transformedSections);
+          setSections(transformedSections);
+          setExpandedSection('all');
+        } 
+       
+      } catch {
+      } finally {
+        console.log('Setting loading to false');
+        setLoading(false);
+      }
+    })();
+  }, [assessmentId, getAssessment, transformQuestionnaireToAnswers, calculateBenchmarkScores]);
+
+  const handleSectionToggle = (sectionId: string) => {
+    if (expandedSection === 'all') {
+      // If all sections are expanded, collapse the clicked section
+      setExpandedSection('');
+    } else if (expandedSection === sectionId) {
+      // If this section is expanded, collapse it
+      setExpandedSection('');
+    } else {
+      // If this section is collapsed, expand it
+      setExpandedSection(sectionId);
+    }
+  };
+
+  const handleBackToAssessments = () => {
+    router.push('/assessment');
+  };
+
+  const handleUnlockClick = () => {
+    setShowUnlockDialog(true);
+  };
+
+  const handleCloseUnlockDialog = () => {
+    setShowUnlockDialog(false);
+  };
+
+  const handleUnlockFullAssessment = () => {
+    console.log('Starting payment flow for full assessment unlock');
+    setShowUnlockDialog(false);
+
+    // Store payment metadata in Redux before navigating
+    if (assessmentId) {
+      dispatch(setPaymentMetadata({
+        assessmentId: assessmentId,
+        assessmentName: 'Assessment Report'
+      }));
+    }
+
+    // Navigate to checkout page with assessment ID and payment parameters
+    const checkoutUrl = `/checkout?assessmentId=${assessmentId}&step=0&paymentMethod=pmid`;
+    router.push(checkoutUrl);
+  };
+
+  // useEffect to fetch assessment data when component mounts
+  useEffect(() => {
+    if (assessmentId && assessmentId.trim() !== '') {
+      console.log('Fetching assessment data for ID:', assessmentId);
+      fetchAssessmentData();
+    } else if (assessmentId === null) {
+      console.log('Still waiting for searchParams to be available');
+      return;
+    } else {
+      setTimeout(() => {
+        router.push('/assessment');
+      }, 2000);
+    }
+  }, [assessmentId, fetchAssessmentData, router]);
+
+  // Add timeout to prevent infinite loading
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (loading) {
+        setLoading(false);
+      }
+    }, 10000);
+
+    return () => clearTimeout(timeout);
+  }, [loading]);
+
+  // Function to get referral text for a selected radio button option
+  const getReferralTextForAnswer = (answer: Answer): string | null => {
+    if (!answer.answer || answer.questionType !== 'radio') return null;
+
+    if (answer.options && Array.isArray(answer.options)) {
+      const selectedOption = answer.answer;
+      const optionIndex = answer.options.findIndex(option => option === selectedOption);
+
+      if (optionIndex !== -1 && assessmentData) {
+        for (const section of assessmentData.sections) {
+          if (section.questionnaire?.nodes) {
+            const questionNode = section.questionnaire.nodes.find(node =>
+              node.id === answer.questionId ||
+              node.id === answer.questionId.replace(/^template-\d+-/, '')
+            );
+
+            if (questionNode?.data?.optionsData && questionNode.data.optionsData[optionIndex]) {
+              const referralText = questionNode.data.optionsData[optionIndex].referralText;
+              if (referralText && referralText.trim() !== '') {
+                return referralText;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return null;
+  };
+
+  const renderAnswer = (answer: Answer) => {
+    const isUnanswered = !answer.answer ||
+      (Array.isArray(answer.answer) && answer.answer.length === 0) ||
+      (typeof answer.answer === 'string' && answer.answer.trim() === '');
+
+    switch (answer.questionType) {
+      case 'radio':
+        const referralText = getReferralTextForAnswer(answer);
+        return (
+          <Box>
+            <FormControl component="fieldset" disabled>
+              <RadioGroup value={isUnanswered ? '' : answer.answer}>
+                {(answer.options || []).map((option, index) => (
+                  <FormControlLabel
+                    key={index}
+                    value={option}
+                    control={<Radio size="small" sx={{
+                      '&.Mui-checked': {
+                        color: '#3b82f6',
+                      },
+                      '&:hover': {
+                        backgroundColor: 'rgba(59, 130, 246, 0.04)',
+                      },
+                      cursor: 'not-allowed'
+                    }} />}
+                    label={option || 'Unknown option'}
+                    sx={{
+                      cursor: 'not-allowed',
+                      '& .MuiFormControlLabel-label': {
+                        fontSize: '14px',
+                        color: '#111827'
+                      },
+                      '& .MuiFormControlLabel-label.Mui-disabled': {
+                        color: 'black'
+                      }
+                    }}
+                  />
+                ))}
+              </RadioGroup>
+            </FormControl>
+            {referralText && (
+              <Alert
+                severity="info"
+                icon={<InfoIcon />}
+                sx={{
+                  mt: 2,
+                  '& .MuiAlert-message': {
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    fontFamily: 'var(--font-inter), sans-serif'
+                  }
+                }}
+              >
+                {referralText}
+              </Alert>
+            )}
+          </Box>
+        );
+      case 'checkbox':
+        return (
+          <Box>
+            {isUnanswered ? (
+              (answer.options || []).map((option, index) => (
+                <FormControlLabel
+                  key={index}
+                  control={<Checkbox checked={false} disabled size="small" sx={{ cursor: 'not-allowed' }} />}
+                  label={option || 'Unknown option'}
+                  sx={{
+                    display: 'block',
+                    cursor: 'not-allowed',
+                    '& .MuiFormControlLabel-label': {
+                      fontSize: '14px',
+                      color: '#374151'
+                    }
+                  }}
+                />
+              ))
+            ) : (
+              Array.isArray(answer.answer) ? (answer.answer || []).map((item, index) => (
+                <FormControlLabel
+                  key={index}
+                  control={<Checkbox checked={!!item} disabled size="small" />}
+                  label={item || 'Unknown option'}
+                  sx={{
+                    display: 'block',
+                    '& .MuiFormControlLabel-label': {
+                      fontSize: '14px',
+                      color: '#374151'
+                    }
+                  }}
+                />
+              )) : (
+                <FormControlLabel
+                  control={<Checkbox checked={!!answer.answer} disabled size="small" />}
+                  label={answer.answer || 'No answer'}
+                  sx={{
+                    '& .MuiFormControlLabel-label': {
+                      fontSize: '14px',
+                      color: '#374151'
+                    }
+                  }}
+                />
+              )
+            )}
+          </Box>
+        );
+      case 'text-input':
+      case 'text':
+        return (
+          <TextField
+            value={answer.answer || ''}
+            placeholder={isUnanswered ? 'No answer provided' : ''}
+            disabled
+            multiline
+            fullWidth
+            variant="outlined"
+            size="small"
+            sx={{
+              cursor: 'not-allowed',
+              '& .MuiOutlinedInput-root': {
+                backgroundColor: isUnanswered ? '#fefbf2' : '#f9fafb',
+                fontSize: '14px',
+                cursor: 'not-allowed'
+              },
+              '& .MuiInputBase-input.Mui-disabled': {
+                cursor: 'not-allowed'
+              }
+            }}
+          />
+        );
+      default:
+        return (
+          <Typography sx={{
+            fontSize: '14px',
+            color: isUnanswered ? '#92400e' : '#374151',
+            fontStyle: 'italic',
+            backgroundColor: isUnanswered ? '#fef3c7' : 'transparent',
+            padding: isUnanswered ? '8px' : '0',
+            borderRadius: isUnanswered ? '4px' : '0'
+          }}>
+            {answer.answer || 'No answer provided'}
+          </Typography>
+        );
+    }
+  };
+
+  // Show loading while waiting for search params or during data fetch
+  if (assessmentId === null || loading || queryLoading) {
+    return (
+      <DashboardLayout>
+        <Box sx={{
+          height: "100%",
+          backgroundColor: "#f8fafc",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center"
+        }}>
+          <CircularProgress />
+        </Box>
+      </DashboardLayout>
+    );
+  }
+
+  if (!assessmentData) {
+    return (
+      <DashboardLayout>
+        <Box sx={{
+          height: "100%",
+          backgroundColor: "#f8fafc",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          gap: 2
+        }}>
+          <Typography variant="h6" color="#6b7280">No assessment data found</Typography>
+        </Box>
+      </DashboardLayout>
+    );
+  }
+
+  return (
+    <DashboardLayout>
+      <Box sx={{
+        height: "100%",
+        backgroundColor: "#f8fafc",
+        overflow: "auto",
+        '&::-webkit-scrollbar': {
+          width: '8px',
+        },
+        '&::-webkit-scrollbar-track': {
+          background: '#f1f1f1',
+          borderRadius: '4px',
+        },
+        '&::-webkit-scrollbar-thumb': {
+          background: '#3b82f6',
+          borderRadius: '4px',
+          '&:hover': {
+            background: '#2563eb',
+          },
+        },
+      }}>
+        {/* Sticky Header */}
+        <Box sx={{ backgroundColor: "transparent", position: "sticky", top: 0, zIndex: 10 }}>
+          <Box sx={{ px: 0, pt: 0, pb: 1 }}>
+            {/* Assessment Title and Info */}
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="h5" fontWeight={600} fontFamily={"var(--font-inter), sans-serif"} sx={{ color: "#111827" }}>
+                Assessment Summary
+              </Typography>
+              <Typography variant="subtitle1" color="#6c757d" fontFamily={"var(--font-inter), sans-serif"}>
+                {user?.facilityName || 'City General Hospital'} - Started On {new Date().toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric'
+                })}
+              </Typography>
+            </Box>
+
+            {/* Benchmark Cards and Unlock Button */}
+            <Box sx={{ display: 'flex', gap: 3, alignItems: 'flex-start', justifyContent: 'space-between' }}>
+              {/* Left side - Benchmark Cards */}
+              <Box sx={{ display: 'flex', gap: 3 }}>
+                {/* Benchmark Leapfrog Card */}
+                <Card sx={{
+                  width: '280px',
+                  borderRadius: '8px',
+                  border: '1px solid #e5e7eb',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+                  backgroundColor: '#fff',
+                  transition: 'all 0.3s ease-in-out',
+                  cursor: 'pointer',
+                  '&:hover': {
+                    transform: 'translateY(-2px)',
+                    boxShadow: '0 8px 25px rgba(0,0,0,0.15)'
+                  }
+                }}>
+                  <CardContent sx={{ p: 2 }}>
+                    <Typography variant="subtitle1" fontWeight={600} fontFamily={"var(--font-inter), sans-serif"} sx={{ color: "#111827", mb: 1.5, textAlign: 'center', fontSize: '14px' }}>
+                      Benchmark Leapfrog
+                    </Typography>
+                    <Box sx={{
+                      height: '8px',
+                      borderRadius: '4px',
+                      background: 'linear-gradient(90deg, #ff6b6b 0%, #ffa726 25%, #ffeb3b 50%, #66bb6a 75%, #4caf50 100%)',
+                      mb: 0.5,
+                      position: 'relative'
+                    }}>
+                      <Box sx={{
+                        position: 'absolute',
+                        top: '-2px',
+                        left: `${Math.min(leapfrogScore.percentage, 100)}%`,
+                        transform: 'translateX(-50%)',
+                        width: '0',
+                        height: '0',
+                        borderLeft: '4px solid transparent',
+                        borderRight: '4px solid transparent',
+                        borderTop: '6px solid #333'
+                      }} />
+                    </Box>
+                    <Typography variant="body2" fontWeight={700} fontFamily={"var(--font-inter), sans-serif"} sx={{ color: "#111827", textAlign: 'center', fontSize: '14px' }}>
+                      {leapfrogScore.totalScore.toFixed(1)}/{leapfrogScore.totalQuestions}
+                    </Typography>
+                  </CardContent>
+                </Card>
+
+                {/* Benchmark CMS/NHSN Card */}
+                <Card sx={{
+                  width: '280px',
+                  borderRadius: '8px',
+                  border: '1px solid #e5e7eb',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+                  backgroundColor: '#fff',
+                  transition: 'all 0.3s ease-in-out',
+                  cursor: 'pointer',
+                  '&:hover': {
+                    transform: 'translateY(-2px)',
+                    boxShadow: '0 8px 25px rgba(0,0,0,0.15)'
+                  }
+                }}>
+                  <CardContent sx={{ p: 2 }}>
+                    <Typography variant="subtitle1" fontWeight={600} fontFamily={"var(--font-inter), sans-serif"} sx={{ color: "#111827", mb: 1.5, textAlign: 'center', fontSize: '14px' }}>
+                      Benchmark CMS/NHSN
+                    </Typography>
+                    <Box sx={{
+                      height: '8px',
+                      borderRadius: '4px',
+                      background: 'linear-gradient(90deg, #ff6b6b 0%, #ffa726 25%, #ffeb3b 50%, #66bb6a 75%, #4caf50 100%)',
+                      mb: 0.5,
+                      position: 'relative'
+                    }}>
+                      <Box sx={{
+                        position: 'absolute',
+                        top: '-2px',
+                        left: `${Math.min(cmsScore.percentage, 100)}%`,
+                        transform: 'translateX(-50%)',
+                        width: '0',
+                        height: '0',
+                        borderLeft: '4px solid transparent',
+                        borderRight: '4px solid transparent',
+                        borderTop: '6px solid #333'
+                      }} />
+                    </Box>
+                    <Typography variant="body2" fontWeight={700} fontFamily={"var(--font-inter), sans-serif"} sx={{ color: "#111827", textAlign: 'center', fontSize: '14px' }}>
+                      {cmsScore.totalScore.toFixed(1)}/{cmsScore.totalQuestions}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Box>
+
+              {/* Right side - Unlock Full Assessment Button */}
+              <Button
+                variant="contained"
+                onClick={handleUnlockClick}
+                sx={{
+                  backgroundColor: '#408bff',
+                  color: '#fff',
+                  textTransform: 'none',
+                  fontWeight: 600,
+                  fontFamily: 'var(--font-inter), sans-serif',
+                  borderRadius: '8px',
+                  padding: '12px 24px',
+                  boxShadow: '0 2px 8px rgba(64, 139, 255, 0.3)',
+                  whiteSpace: 'nowrap',
+                  minWidth: 'auto',
+                  height: 'fit-content',
+                  alignSelf: 'flex-start',
+                  '&:hover': {
+                    backgroundColor: '#3a7de6',
+                    boxShadow: '0 4px 12px rgba(64, 139, 255, 0.4)'
+                  }
+                }}
+              >
+                Unlock Full Assessment
+              </Button>
+            </Box>
+
+          </Box>
+        </Box>
+
+        {/* Main Content Card */}
+        <Box
+          sx={{
+            borderColor: "#e5e7eb",
+            borderRadius: 2,
+            boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+            mt: 2,
+            display: "flex",
+            flexDirection: "column",
+            backgroundColor: "#fff",
+            border: "1px solid #e5e7eb",
+            height: "calc(100vh - 350px)",
+            minHeight: "600px",
+            maxHeight: "800px"
+          }}
+        >
+          {/* Scrollable Content Area */}
+          <Box sx={{
+            flex: 1,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column"
+          }}>
+            {/* Sections Container - Scrollable */}
+            <Box sx={{
+              flex: 1,
+              overflowY: "auto",
+              p: 2.5,
+              pt: 3,
+              '&::-webkit-scrollbar': {
+                width: '8px',
+              },
+              '&::-webkit-scrollbar-track': {
+                background: '#f1f1f1',
+                borderRadius: '4px',
+              },
+              '&::-webkit-scrollbar-thumb': {
+                background: '#3b82f6',
+                borderRadius: '4px',
+                '&:hover': {
+                  background: '#2563eb',
+                },
+              },
+              scrollbarWidth: 'thin',
+              scrollbarColor: '#3b82f6 #f1f1f1',
+            }}>
+              {sections.length > 0 ? sections.map((section) => (
+                <Accordion
+                  key={section.id}
+                  expanded={expandedSection === 'all' || expandedSection === section.id}
+                  onChange={() => handleSectionToggle(section.id)}
+                  sx={{
+                    mb: 2,
+                    borderRadius: '8px !important',
+                    border: '1px solid #e5e7eb',
+                    boxShadow: 'none',
+                    transition: 'all 0.3s ease-in-out',
+                    '&:before': {
+                      display: 'none'
+                    },
+                    '&.Mui-expanded': {
+                      margin: '0 0 16px 0',
+                      '& .MuiAccordionDetails-root': {
+                        minHeight: '200px',
+                      }
+                    }
+                  }}
+                >
+                  <AccordionSummary
+                    expandIcon={<ExpandMoreIcon sx={{
+                      color: '#4cb054',
+                      fontSize: '24px'
+                    }} />}
+                    sx={{
+                      backgroundColor: '#f6fbf6',
+                      borderRadius: '8px',
+                      minHeight: '56px',
+                      cursor: 'pointer',
+                      transition: 'all 0.3s ease-in-out',
+                      '&.Mui-expanded': {
+                        borderBottomLeftRadius: 0,
+                        borderBottomRightRadius: 0,
+                        minHeight: '56px',
+                        backgroundColor: '#e4f3e6',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                        transform: 'translateY(-1px)',
+                      },
+                      '& .MuiAccordionSummary-content': {
+                        alignItems: 'center',
+                        margin: '12px 0',
+                        transition: 'all 0.3s ease-in-out'
+                      },
+                      '& .MuiAccordionSummary-content.Mui-expanded': {
+                        margin: '12px 0'
+                      },
+                      '&:hover': {
+                        backgroundColor: '#e4f3e6',
+                        transform: 'translateY(-1px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      }
+                    }}
+                  >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                        <DoneIcon sx={{ color: '#4cb054', fontSize: '20px' }} />
+                        <Typography
+                          variant="h6"
+                          fontWeight={600}
+                          fontFamily={'var(--font-inter), sans-serif'}
+                          sx={{ color: '#4cb054' }}
+                        >
+                          {section.name}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'center', gap: 1 }}>
+
+                      </Box>
+                    </Box>
+                  </AccordionSummary>
+                  <AccordionDetails sx={{
+                    backgroundColor: '#fafafa',
+                    borderTop: '1px solid #e5e7eb',
+                    p: 3
+                  }}>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {section.answers.map((answer, index) => (
+                        <Box key={answer.questionId} sx={{ mb: 2 }}>
+                          <Typography
+                            variant="subtitle1"
+                            fontWeight={600}
+                            fontFamily={'var(--font-inter), sans-serif'}
+                            sx={{ mb: 1, color: '#111827' }}
+                          >
+                            {index + 1}. {answer.questionText}
+                          </Typography>
+                          {renderAnswer(answer)}
+                        </Box>
+                      ))}
+                    </Box>
+                  </AccordionDetails>
+                </Accordion>
+              )) : (
+                <Box sx={{
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  height: '200px'
+                }}>
+                  <Typography variant="h6" color="#6b7280">No sections available</Typography>
+                </Box>
+              )}
+            </Box>
+          </Box>
+
+          {/* Fixed Bottom Action Bar */}
+          <Box sx={{
+            borderTop: '1px solid #e5e7eb',
+            backgroundColor: '#fff',
+            p: 2.5,
+            display: 'flex',
+            justifyContent: 'flex-end',
+            alignItems: 'center'
+          }}>
+            {/* Back Button on the right */}
+            <Button
+              variant="outlined"
+              startIcon={<ArrowBackIcon />}
+              onClick={handleBackToAssessments}
+              sx={{
+                borderColor: '#d1d5db',
+                color: '#374151',
+                textTransform: 'none',
+                fontWeight: 500,
+                fontFamily: 'var(--font-inter), sans-serif',
+                borderRadius: '8px',
+                padding: '8px 16px',
+                '&:hover': {
+                  borderColor: '#9ca3af',
+                  backgroundColor: '#f9fafb'
+                }
+              }}
+            >
+              Back
+            </Button>
+          </Box>
+        </Box>
+
+        {/* Unlock Full Assessment Dialog */}
+        <Dialog
+          open={showUnlockDialog}
+          onClose={handleCloseUnlockDialog}
+          maxWidth="sm"
+          fullWidth
+          sx={{
+            '& .MuiDialog-paper': {
+              borderRadius: '12px',
+              padding: '8px'
+            }
+          }}
+        >
+          <DialogTitle sx={{
+            textAlign: 'center',
+            fontWeight: 600,
+            fontFamily: 'var(--font-inter), sans-serif',
+            fontSize: '24px',
+            color: '#111827',
+            pb: 1
+          }}>
+            Hospital Assessment Report
+          </DialogTitle>
+          <DialogContent sx={{ textAlign: 'center', px: 4, py: 2 }}>
+            <Typography
+              variant="body1"
+              fontFamily={'var(--font-inter), sans-serif'}
+              sx={{
+                color: '#6b7280',
+                lineHeight: 1.6,
+                mb: 3
+              }}
+            >
+              Unlock the full potential of your report with our complete assessment. Get detailed scoring, advanced benchmarking, and the ability to download or email the full PDF.
+            </Typography>
+          </DialogContent>
+          <DialogActions sx={{ justifyContent: 'center', px: 4, pb: 3 }}>
+            <Button
+              variant="contained"
+              onClick={handleUnlockFullAssessment}
+              sx={{
+                backgroundColor: '#408bff',
+                color: '#fff',
+                textTransform: 'none',
+                fontWeight: 600,
+                fontFamily: 'var(--font-inter), sans-serif',
+                borderRadius: '8px',
+                padding: '12px 32px',
+                fontSize: '16px',
+                boxShadow: '0 2px 8px rgba(64, 139, 255, 0.3)',
+                '&:hover': {
+                  backgroundColor: '#3a7de6',
+                  boxShadow: '0 4px 12px rgba(64, 139, 255, 0.4)'
+                }
+              }}
+            >
+              Unlock Full Assessment - $5,000
+            </Button>
+          </DialogActions>
+        </Dialog>
+      </Box>
+    </DashboardLayout>
+  );
+};
+
+export default AssessmentSummary;

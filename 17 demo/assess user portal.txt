@@ -1,0 +1,713 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+"use client";
+import React from 'react';
+import {
+  Box, Button, Typography, MenuItem, Select, Table, TableBody, TableCell,
+  TableContainer, TableHead, TableRow, IconButton, Grid, InputLabel, FormControl,
+  CircularProgress, Tooltip, Dialog, DialogContent
+} from '@mui/material';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import { AddOutlined, Edit, RemoveRedEyeOutlined } from '@mui/icons-material';
+import { useRouter } from 'next/navigation';
+import { useLazyQuery, useQuery } from '@apollo/client';
+import { toast } from 'react-toastify';
+import { useDispatch, useSelector } from 'react-redux';
+import DashboardLayout from '../../components/layout/DashboardLayout';
+import { setTemplatesData } from '../../utils/templatesStore';
+import { withPageLoader, CustomPagination } from "@frontend/shared-ui";
+import ThankYouScreen from '../../components/common/ThankYouScreen';
+import { setPaymentMetadata, clearPaymentMetadata } from '../../store/assessmentSlice';
+import {
+  LIST_USER_ASSESSMENTS_QUERY,
+  ListUserAssessmentsData,
+  type Assessment,
+  GET_ASSESSMENT_QUERY,
+  GET_ASSESSMENT_EMPTY_QUERY,
+  GetAssessmentData,
+  LIST_SECTIONS_QUERY,
+  ListSectionsData
+} from '../../graphql/templates.service';
+import SectionSelectionModal from '../../components/assessment/SectionSelectionModal';
+import CheckoutStepper from '../../components/checkout/CheckoutStepper';
+import PdfLockIcon from '../../components/assessment/PdfLockIcon';
+
+const baseStatusStyle = {
+  fontWeight: 600,
+  borderRadius: '4px',
+  padding: '4px 8px',
+  width: '120px',
+  textAlign: 'center',
+};
+
+const statusStyles: any = {
+  IN_PROGRESS : {
+    ...baseStatusStyle,
+    backgroundColor: '#fff3cd',
+    color: '#d8a714ff',
+  },
+  COMPLETED: {
+    ...baseStatusStyle,
+    backgroundColor: '#d4edda',
+    color: '#18cf43ff',
+  },
+  BLOCKED: {
+    ...baseStatusStyle,
+    backgroundColor: '#fff3cd',
+    color: '#d8a714ff',
+  },
+};
+
+const Assessment = () => {
+  //  status is an array to support multi-filter (IN_PROGRESS or BLOCKED)
+  const [status, setStatus] = React.useState<string[]>([]);
+  const [allTime, setAllTime] = React.useState('');
+  const [sortOrder, setSortOrder] = React.useState('');
+  const [currentPage, setCurrentPage] = React.useState(1);
+  const [rowsPerPage, setRowsPerPage] = React.useState(10);
+  const [isClient, setIsClient] = React.useState(false);
+  const [showSectionModal, setShowSectionModal] = React.useState(false);
+  const [showPremiumModal, setShowPremiumModal] = React.useState(false);
+  const [showCheckoutStepper, setShowCheckoutStepper] = React.useState(false);
+  const [selectedAssessmentId, setSelectedAssessmentId] = React.useState<string>('');
+  const [sections, setSections] = React.useState<any[]>([]);
+  const [isLoadingSections, setIsLoadingSections] = React.useState(false);
+  const [paidAssessments, setPaidAssessments] = React.useState<Set<string>>(new Set());
+  const [showUnlockedPopup, setShowUnlockedPopup] = React.useState(false);
+  const [unlockedAssessment, setUnlockedAssessment] = React.useState<Assessment | null>(null);
+  const router = useRouter();
+  const dispatch = useDispatch();
+  const { user } = useSelector((state: any) => state.auth);
+
+  React.useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+//test
+  const [getAssessment] = useLazyQuery<GetAssessmentData>(
+    GET_ASSESSMENT_QUERY,
+    {
+      fetchPolicy: 'cache-and-network',
+
+    }
+  );
+
+  const [getAssessmentEmpty] = useLazyQuery<GetAssessmentData>(
+    GET_ASSESSMENT_EMPTY_QUERY,
+    {
+      fetchPolicy: 'cache-and-network',
+    }
+  );
+
+  const [getSections] = useLazyQuery<ListSectionsData>(
+    LIST_SECTIONS_QUERY,
+    {
+      fetchPolicy: 'cache-and-network',
+    }
+  );
+
+  const { data: assessmentsData, loading: assessmentsLoading, error: assessmentsError } =
+    useQuery<ListUserAssessmentsData>(LIST_USER_ASSESSMENTS_QUERY, {
+      variables: {
+        page: currentPage,
+        limit: rowsPerPage,
+        statusFilter: [], // Empty array to get all statuses (AssessmentStatus enum values)
+      },
+      fetchPolicy: 'cache-and-network',
+
+    });
+
+  //  match your first page’s behavior
+  const handleStatusChange = (newStatus: string) => {
+    if (newStatus === 'IN_PROGRESS_OR_BLOCKED') {
+      setStatus(['IN_PROGRESS', 'BLOCKED']);
+    } else if (newStatus) {
+      setStatus([newStatus]);
+    } else {
+      setStatus([]);
+    }
+    setCurrentPage(1);
+  };
+
+  const handleTimeChange = (newTime: string) => {
+    setAllTime(newTime);
+    setCurrentPage(1);
+  };
+
+  const handleSortChange = (newSort: string) => {
+    setSortOrder(newSort);
+    setCurrentPage(1);
+  };
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+  };
+
+  const handleRowsPerPageChange = (newRowsPerPage: number) => {
+    setRowsPerPage(newRowsPerPage);
+    setCurrentPage(1);
+  };
+
+  const formatDate = (dateString: string) => {
+    if (!dateString) return '-';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  };
+
+  // show "In Progress" for both IN_PROGRESS and BLOCKED
+  const getStatusDisplayText = (s: string) => {
+    switch (s) {
+      case 'IN_PROGRESS':
+        return 'In Progress';
+      case 'COMPLETED':
+        return 'Completed';
+      case 'BLOCKED':
+        return 'In Progress';
+      default:
+        return s;
+    }
+  };
+
+  const handleNewAssessment = async () => {
+    // Show modal first
+    setShowSectionModal(true);
+    setIsLoadingSections(true);
+    
+    try {
+      const result = await getSections();
+      const response = result.data?.listSections;
+
+      if (response?.status !== 'success') {
+        toast.error(response?.message || 'Failed to load sections');
+        setShowSectionModal(false);
+        setIsLoadingSections(false);
+        return;
+      }
+
+      const sections = response?.sections || [];
+      
+      if (sections.length === 0) {
+        toast.error('No sections available. Please contact your administrator.');
+        setShowSectionModal(false);
+        setIsLoadingSections(false);
+        return;
+      }
+
+      setSections(sections);
+      setIsLoadingSections(false);
+    } catch (error) {
+      console.error('Error in handleNewAssessment:', error);
+      toast.error('Failed to load sections. Please try again.');
+      setShowSectionModal(false);
+      setIsLoadingSections(false);
+    }
+  };
+
+  const handleSectionProceed = async (selectedSection: any) => {
+    try {
+      // Close the modal first
+      setShowSectionModal(false);
+      
+      let result;
+      const sectionStatus = selectedSection.status?.toLowerCase();
+      
+      console.log('🔍 Section status:', sectionStatus);
+      console.log('🔍 Selected section:', selectedSection);
+      
+      // Determine which query to use based on section status
+      if (sectionStatus === 'inprogress' && selectedSection.assessmentId) {
+        // For inProgress sections, use assessmentId
+        console.log('🔄 Using assessmentId for inProgress section:', selectedSection.assessmentId);
+        result = await getAssessment({ 
+          variables: { assessmentId: selectedSection.assessmentId } 
+        });
+      } else if (sectionStatus === 'completed' || sectionStatus === 'startnew') {
+      
+        // console.log('🔄 Using sectionVersionId for completed/notStarted section:', selectedSection.sectionVersionId);
+        result = await getAssessment({ 
+          variables: { sectionVersionId: selectedSection.sectionVersionId } 
+        });
+      } else {
+        // Fallback: try empty query
+        console.log('🔄 Using empty query as fallback');
+        result = await getAssessmentEmpty();
+      }
+      
+      const response = result.data?.getAssessment;
+
+      if (response?.status !== 'success') {
+        toast.error(response?.message || 'Failed to load assessment');
+        return;
+      }
+
+      const assessment = response?.assessment;
+      if (!assessment) {
+        toast.error('No assessment data found. Please contact administrator.');
+        return;
+      }
+
+      // Find the selected section in the assessment
+      const selectedSectionData = assessment.sections?.find(
+        (section: any) => section.sectionName === selectedSection.sectionName
+      );
+
+      if (!selectedSectionData) {
+        toast.error('Selected section not found in assessment data.');
+        return;
+      }
+
+      // Prepare data for the assessment page
+      const assessmentData = {
+        assessment: assessment,
+        selectedSection: selectedSectionData,
+        sectionVersionId: selectedSection.sectionVersionId,
+        assessmentId: selectedSection.assessmentId
+      };
+      
+      setTemplatesData(assessmentData);  
+      router.push('/assessment/new');
+    } catch (error) {
+      console.error('Error in handleSectionProceed:', error);
+      toast.error('Failed to load assessment. Please try again.');
+    }
+  };
+
+  const handleCloseSectionModal = () => {
+    setShowSectionModal(false);
+    setIsLoadingSections(false);
+  };
+
+  const handleEditAssessment = async (assessmentId: string) => {
+    try {
+      const result = await getAssessment({ variables: { assessmentId } });
+      if (result.data?.getAssessment?.status === 'success' && result.data.getAssessment.assessment) {
+        const assessmentData = result.data.getAssessment.assessment;
+        
+        // Check if all sections have nextQuestionId as "completed"
+        const allSectionsCompleted = assessmentData.sections?.every(section => 
+          section.progress?.nextQuestionId === "completed"
+        );
+        
+        // Check if any section has nextQuestionId as "blocked"
+        const hasBlockedSection = assessmentData.sections?.some(section => 
+          section.progress?.nextQuestionId === "blocked"
+        );
+        
+        console.log('🔍 Edit Assessment Logic:', {
+          allSectionsCompleted,
+          hasBlockedSection,
+          sectionsProgress: assessmentData.sections?.map(s => ({
+            sectionName: s.sectionName,
+            nextQuestionId: s.progress?.nextQuestionId
+          }))
+        });
+        
+        // If all sections are completed, go to review page
+        if (allSectionsCompleted) {
+          console.log('✅ All sections completed - navigating to review page');
+          router.push(`/assessment/review?id=${assessmentId}`);
+          return;
+        }
+        
+        // If any section is blocked, go to that specific question
+        if (hasBlockedSection) {
+          console.log('🚫 Blocked section found - navigating to new assessment page');
+          const templatesData = {
+            scenarioVersions: [],
+            assessment: assessmentData,
+            isEditing: true,
+            assessmentId
+          };
+          setTemplatesData(templatesData);
+          router.push(`/assessment/new?id=${assessmentId}`);
+          return;
+        }
+        
+        // Default case: go to new assessment page for editing
+        console.log('📝 Default case - navigating to new assessment page');
+        const templatesData = {
+          scenarioVersions: [],
+          assessment: assessmentData,
+          isEditing: true,
+          assessmentId
+        };
+        setTemplatesData(templatesData);
+        router.push(`/assessment/new?id=${assessmentId}`);
+        
+      } else {
+        const errorMessage = result.data?.getAssessment?.message || 'Unknown error occurred';
+        toast.error(`Failed to load assessment: ${errorMessage}`);
+      }
+    } catch {
+      toast.error('Failed to load assessment. Please try again.');
+    }
+  };
+
+  const handleViewAssessment = (assessmentId: string) => {
+    router.push(`/assessment/review?id=${assessmentId}&mode=view`);
+  };
+
+  const handleFreePdfDownload = (assessmentId: string) => {
+    console.log('Download free PDF for assessment:', assessmentId);
+    // Add free PDF download logic here
+  };
+
+  const handlePremiumPdfClick = (assessmentId: string) => {
+    // Find the assessment to get its name
+    const assessments = assessmentsData?.listUserAssessments?.assessments || [];
+    const assessment = assessments.find((a: Assessment) => a._id === assessmentId);
+
+    if (assessment?.isUnlocked) {
+      // Show unlocked popup
+      setUnlockedAssessment(assessment);
+      setShowUnlockedPopup(true);
+    } else {
+      // Store payment metadata in Redux
+      dispatch(setPaymentMetadata({
+        assessmentId: assessmentId,
+        assessmentName: assessment?.sectionName || 'Assessment Report'
+      }));
+
+      // Navigate to checkout page with assessment ID in URL params
+      router.push(`/checkout?assessmentId=${assessmentId}`);
+    }
+  };
+
+  const handleUnlockFullAssessment = () => {
+    setShowPremiumModal(false);
+    setShowCheckoutStepper(true);
+  };
+
+  const handleCheckoutComplete = (data: any) => {
+    console.log('Checkout completed with data:', data);
+    console.log('Assessment ID:', selectedAssessmentId);
+    // Mark the assessment as paid
+    if (selectedAssessmentId) {
+      setPaidAssessments(prev => new Set([...prev, selectedAssessmentId]));
+    }
+    // Add your checkout completion logic here
+    toast.success('Payment completed successfully!');
+    setShowCheckoutStepper(false);
+    setSelectedAssessmentId('');
+    dispatch(clearPaymentMetadata());
+  };
+
+  const handleCheckoutCancel = () => {
+    setShowCheckoutStepper(false);
+    setSelectedAssessmentId('');
+    dispatch(clearPaymentMetadata());
+  };
+
+  const assessments = assessmentsData?.listUserAssessments?.assessments || [];
+  const pagination = assessmentsData?.listUserAssessments?.pagination;
+
+  if (!isClient || typeof window === 'undefined') return null;
+
+  // Show checkout stepper when requested
+  if (showCheckoutStepper) {
+    return (
+      <CheckoutStepper
+        assessmentId={selectedAssessmentId}
+        onComplete={handleCheckoutComplete}
+        onCancel={handleCheckoutCancel}
+      />
+    );
+  }
+
+  return (
+    <DashboardLayout>
+      <Box>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+          <Box>
+            <Typography variant="h5" fontWeight={600} fontFamily={'var(--font-inter), sans-serif'}>
+              Assessment Records
+            </Typography>
+            <Typography variant="subtitle1" color="#6c757d" fontFamily={'var(--font-inter), sans-serif'}>
+              View and manage all assessments for City General Hospital
+            </Typography>
+          </Box>
+          <Button
+            onClick={handleNewAssessment}
+            variant="contained"
+            size='large'
+            sx={{
+              background: 'linear-gradient(90deg, #408bff 0%, #3a7de6 100%)',
+              textTransform: 'none',
+              letterSpacing: '0.5px',
+              fontWeight: 500,
+              fontFamily: 'var(--font-inter), sans-serif',
+              borderRadius: '4px',
+              padding: '8px 24px',
+              boxShadow: '0 2px 8px rgba(64, 139, 255, 0.25)',
+              border: 'none',
+              '&:hover': {
+                background: 'linear-gradient(90deg, #3a7de6 0%, #3670cc 100%)',
+                boxShadow: '0 4px 12px rgba(64, 139, 255, 0.3)',
+              }
+            }}
+          >
+            <AddOutlined /> &nbsp; New Assessment
+          </Button>
+        </Box>
+
+        <Box sx={{ border: '1px solid #e4e5e7', borderRadius: '10px', padding: 3, backgroundColor: '#fff' }}>
+          <Grid container spacing={2} sx={{ mb: 2 }}>
+            <Grid>
+              <FormControl sx={{ minWidth: 230 }}>
+                <InputLabel>Status</InputLabel>
+                {/* value is an array now */}
+                <Select
+                  value={status as unknown as string} // MUI Select expects a string when not multiple; we only use it to carry selection key
+                  label="Status"
+                  style={{ borderRadius: '12px', height: '50px' }}
+                  onChange={(e) => handleStatusChange(e.target.value)}
+                >
+                  <MenuItem value="">All Statuses</MenuItem>
+                  <MenuItem value="IN_PROGRESS_OR_BLOCKED">In Progress</MenuItem>
+                  <MenuItem value="COMPLETED">Completed</MenuItem>
+                  {/* <MenuItem value="BLOCKED">Blocked</MenuItem> */}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid>
+              <FormControl sx={{ minWidth: 230 }}>
+                <InputLabel>All Time</InputLabel>
+                <Select
+                  value={allTime}
+                  label="All Time"
+                  style={{ borderRadius: '12px', height: '50px' }}
+                  onChange={(e) => handleTimeChange(e.target.value)}
+                >
+                  <MenuItem value="">All Time</MenuItem>
+                  <MenuItem value="Last 30 Days">Last 30 Days</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid>
+              <FormControl sx={{ minWidth: 230 }}>
+                <InputLabel>Most Recent</InputLabel>
+                <Select
+                  value={sortOrder}
+                  label="Most Recent"
+                  style={{ borderRadius: '12px', height: '50px' }}
+                  onChange={(e) => handleSortChange(e.target.value)}
+                >
+                  <MenuItem value="">Most Recent</MenuItem>
+                  <MenuItem value="Oldest">Oldest</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+          </Grid>
+
+          <TableContainer style={{ borderRadius: '12px', overflow: 'hidden' }}>
+            <Table>
+              <TableHead sx={{ backgroundColor: '#f5f9ff' }}>
+                <TableRow>   
+                  <TableCell><strong>Assessment Date</strong></TableCell>
+                   <TableCell><strong>Assessment Name</strong></TableCell>
+                  <TableCell><strong>Status</strong></TableCell>
+                  <TableCell><strong>Completed By</strong></TableCell>
+                  <TableCell><strong>Actions</strong></TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {assessmentsLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
+                      <CircularProgress size={40} />
+                    </TableCell>
+                  </TableRow>
+                ) : assessmentsError ? (
+                  <TableRow>
+                    <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
+                      <Typography variant="h6" color="#6c757d" fontWeight={600}>
+                        No Record Found
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ) : assessments.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
+                      <Typography variant="h6" color="#6c757d" fontWeight={600}>
+                        No Record Found
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  assessments.map((assessment: Assessment) => (
+                    <TableRow key={assessment._id}>
+                      <TableCell>{formatDate(assessment.startedDate)}</TableCell>
+                      <TableCell>{assessment.sectionName}</TableCell>
+                      <TableCell>
+                        <Box sx={statusStyles[assessment.overallProgress.status] || statusStyles['IN_PROGRESS']}>
+                          {getStatusDisplayText(assessment.overallProgress.status)}
+                        </Box>
+                      </TableCell>
+                      <TableCell>{assessment.completedBy || '-'}</TableCell>
+                      <TableCell>
+                        {assessment.overallProgress.status === 'COMPLETED' ? (
+                          <>
+                            <IconButton onClick={() => handleViewAssessment(assessment._id)}>
+                              <RemoveRedEyeOutlined style={{ fontSize: '25px', color: '#408bff' }} />
+                            </IconButton>
+                            {/* <Tooltip title="Free Report" arrow>
+                              <IconButton onClick={() => handleFreePdfDownload(assessment._id)}>
+                                <PictureAsPdfIcon style={{ fontSize: '25px', color: '#18cf43ff' }} />
+                              </IconButton>
+                            </Tooltip> */}
+                            <IconButton onClick={() => handlePremiumPdfClick(assessment._id)}>
+                              <PdfLockIcon 
+                                isUnlocked={assessment.isUnlocked}
+                                size={25}
+                              />
+                            </IconButton>
+                          </>
+                        ) : (
+                          <IconButton onClick={() => handleEditAssessment(assessment._id)}>
+                            <Edit style={{ fontSize: '25px', color: '#408bff' }} />
+                          </IconButton>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+
+          <CustomPagination
+            currentPage={pagination?.page || 1}
+            totalPages={pagination?.totalPages || 0}
+            rowsPerPage={rowsPerPage}
+            totalItems={pagination?.total || 0}
+            onPageChange={handlePageChange}
+            onRowsPerPageChange={handleRowsPerPageChange}
+            rowsPerPageOptions={[5, 10, 20, 50]}
+          />
+        </Box>
+      </Box>
+      
+      {/* Section Selection Modal */}
+      <SectionSelectionModal
+        open={showSectionModal}
+        onClose={handleCloseSectionModal}
+        onProceed={handleSectionProceed}
+        sections={sections}
+        isLoading={isLoadingSections}
+      />
+
+      {/* Premium Report Modal */}
+      <Dialog 
+        open={showPremiumModal} 
+        onClose={() => setShowPremiumModal(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: '8px',
+            padding: 0,
+            maxWidth: '480px',
+            width: '480px'
+          }
+        }}
+      >
+        <DialogContent sx={{ padding: '32px', position: 'relative' }}>
+          <IconButton 
+            onClick={() => setShowPremiumModal(false)}
+            sx={{ 
+              position: 'absolute', 
+              right: 16, 
+              top: 16,
+              color: '#999',
+              fontSize: '18px',
+              width: '24px',
+              height: '24px',
+              '&:hover': {
+                backgroundColor: 'rgba(0,0,0,0.04)'
+              }
+            }}
+          >
+            ✕
+          </IconButton>
+          
+          <Box sx={{ textAlign: 'center' }}>
+            <Typography 
+              variant="h6" 
+              sx={{ 
+                fontWeight: 600, 
+                mb: 3,
+                color: '#1a1a1a',
+                fontSize: '20px',
+                fontFamily: 'var(--font-inter), sans-serif'
+              }}
+            >
+              Hospital Assessment Report
+            </Typography>
+            
+            <Typography 
+              variant="body1" 
+              sx={{ 
+                color: '#666',
+                lineHeight: 1.5,
+                mb: 4,
+                fontSize: '14px',
+                fontFamily: 'var(--font-inter), sans-serif',
+                maxWidth: '380px',
+                mx: 'auto'
+              }}
+            >
+              Unlock the full potential of your report with our complete assessment. Get detailed scoring, advanced benchmarking, and the ability to download or email the full PDF.
+            </Typography>
+            
+            <Button
+              onClick={handleUnlockFullAssessment}
+              variant="contained"
+              size="large"
+              sx={{
+                backgroundColor: '#408bff',
+                color: 'white',
+                fontWeight: 500,
+                fontSize: '14px',
+                textTransform: 'none',
+                borderRadius: '6px',
+                padding: '12px 24px',
+                fontFamily: 'var(--font-inter), sans-serif',
+                boxShadow: 'none',
+                '&:hover': {
+                  backgroundColor: '#3574e0',
+                  boxShadow: 'none'
+                }
+              }}
+            >
+              Unlock Full Assessment - $5,000
+            </Button>
+          </Box>
+        </DialogContent>
+      </Dialog>
+
+      {/* Unlocked Access Popup */}
+      <ThankYouScreen
+        variant="dialog"
+        open={showUnlockedPopup}
+        sectionName={unlockedAssessment?.sectionName}
+        assessmentId={unlockedAssessment?._id}
+        onBack={() => setShowUnlockedPopup(false)}
+        sx={{
+          '& .MuiDialog-paper': {
+            borderRadius: '16px',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+            border: '1px solid #e9ecef',
+            maxWidth: '600px',
+            width: '100%',
+            mx: 'auto'
+          }
+        }}
+      />
+    </DashboardLayout>
+  );
+};
+
+export default withPageLoader(Assessment);

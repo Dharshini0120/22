@@ -1,0 +1,1698 @@
+import React, { useState, useCallback } from 'react';
+import {
+  Box,
+  Typography,
+  TextField,
+  Button,
+  Paper,
+  InputAdornment,
+  Radio,
+  RadioGroup,
+  FormControl,
+  Card,
+  CardContent,
+  CircularProgress,
+  Menu,
+  MenuItem,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  IconButton
+} from '@mui/material';
+import PersonIcon from '@mui/icons-material/Person';
+import AddIcon from '@mui/icons-material/Add';
+import SecurityIcon from '@mui/icons-material/Security';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+import DeleteIcon from '@mui/icons-material/Delete';
+import CloseIcon from '@mui/icons-material/Close';
+import { loadStripe, StripePaymentElementChangeEvent } from '@stripe/stripe-js';
+import { Elements, PaymentElement, useStripe, useElements} from '@stripe/react-stripe-js';
+import { useQuery, useMutation, useLazyQuery } from '@apollo/client';
+import { useSelector } from 'react-redux';
+import { toast } from 'react-toastify';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { GET_PUBLIC_KEY, CREATE_SETUP_INTENT, LIST_PAYMENT_METHODS, SAVE_PAYMENT_METHOD, CREATE_PAYMENT_INTENT, GET_PAYMENT_METHOD, REMOVE_CARD } from '../../graphql/queries/checkout.queries';
+import PaymentIcon from '../common/PaymentIcon';
+import ThankYouScreen from '../common/ThankYouScreen';
+
+// Initialize Strip
+
+// Stripe Elements options
+const stripeElementOptions = {
+  mode: 'setup' as const,
+  // amount: 2000, // $20.00 in cents
+  //  currency: 'usd',
+  paymentMethodTypes: ['card'] , // only allow card payments
+  appearance: {
+    theme: 'stripe' as const,
+    variables: {
+      colorPrimary: '#3b82f6',
+      colorBackground: '#ffffff',
+      colorText: '#1a1a1a',
+      colorDanger: '#dc2626',
+      fontFamily: 'var(--font-inter), sans-serif',
+      spacingUnit: '4px',
+      borderRadius: '8px',
+    }
+  
+  }
+};
+
+interface CheckoutStepperProps {
+  assessmentId?: string;
+  onComplete?: (data: {
+    selectedPaymentMethod: string;
+    selectedCard?: {
+      id: string;
+      type: string;
+      lastFour: string;
+      expiry: string;
+      isDefault: boolean;
+      color: string;
+      label?: string;
+    };
+    cardholderName: string;
+    cardNumber: string;
+    expiryDate: string;
+    cvc: string;
+    saveCardForFuture: boolean;
+    paymentIntentId?: string;
+  }) => void;
+  onCancel?: () => void;
+}
+
+// Main Checkout Component with Stripe Elements
+const CheckoutStepperContent: React.FC<CheckoutStepperProps> = ({ assessmentId, onComplete, onCancel }) => {
+  // URL and navigation hooks
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  
+  // Initialize state from URL parameters
+  const getStepFromUrl = () => {
+    const stepParam = searchParams.get('step');
+    return stepParam ? parseInt(stepParam, 10) : 0;
+  };
+  
+  const getAddCardFormFromUrl = () => {
+    return searchParams.get('addCard') === 'true';
+  };
+  
+  const getPaymentMethodFromUrl = () => {
+    return searchParams.get('paymentMethod') || '';
+  };
+  
+  const getThankYouScreenFromUrl = () => {
+    return searchParams.get('thankYou') === 'true';
+  };
+  
+  const getProcessingPaymentFromUrl = () => {
+    return searchParams.get('processing') === 'true';
+  };
+  
+  // State variables initialized from URL
+  const [activeStep, setActiveStep] = useState(() => getStepFromUrl());
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(() => getPaymentMethodFromUrl());
+  const [showAddCardForm, setShowAddCardForm] = useState(() => getAddCardFormFromUrl());
+  const [cardholderName, setCardholderName] = useState('');
+  const [setupIntentClientSecret, setSetupIntentClientSecret] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [paymentElementComplete, setPaymentElementComplete] = useState(false);
+  const [savedPaymentMethod, setSavedPaymentMethod] = useState<{
+    card: { last4: string; brand: string };
+    cardholderName?: string;
+    stripePaymentMethodId?: string;
+  } | null>(null);
+  const [selectedExistingCardDetails, setSelectedExistingCardDetails] = useState<{
+    card: { last4: string; brand: string };
+    cardholderName?: string;
+  } | null>(null);
+  const [showProcessingPayment, setShowProcessingPayment] = useState(() => getProcessingPaymentFromUrl());
+  const [showThankYouScreen, setShowThankYouScreen] = useState(() => getThankYouScreenFromUrl());
+  const [completedPaymentData, setCompletedPaymentData] = useState<{
+    selectedPaymentMethod: string;
+    selectedCard?: {
+      id: string;
+      type: string;
+      lastFour: string;
+      expiry: string;
+      isDefault: boolean;
+      color: string;
+      label?: string;
+    };
+    cardholderName: string;
+    cardNumber: string;
+    expiryDate: string;
+    cvc: string;
+    saveCardForFuture: boolean;
+    paymentIntentId?: string;
+  } | null>(null);
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [paymentMethodDetails, setPaymentMethodDetails] = useState<{
+    cardholderName: string;
+    card: { last4: string; brand: string };
+  } | null>(null);
+
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+
+  // Redux selectors
+  const { paymentMetadata } = useSelector((state: { assessment: { paymentMetadata: { assessmentId: string; assessmentName: string } | null } }) => state.assessment);
+  const { user } = useSelector((state: { auth: { user: { email: string } | null } }) => state.auth);
+
+  // Function to update URL with current state
+  const updateUrlWithState = useCallback((step: number, paymentMethod: string, addCardForm: boolean, thankYou: boolean, processing: boolean) => {
+    const params = new URLSearchParams(searchParams.toString());
+    
+    // Update step parameter
+    params.set('step', step.toString());
+    
+    // Update payment method parameter
+    if (paymentMethod) {
+      params.set('paymentMethod', paymentMethod);
+    } else {
+      params.delete('paymentMethod');
+    }
+    
+    // Update add card form parameter
+    if (addCardForm) {
+      params.set('addCard', 'true');
+    } else {
+      params.delete('addCard');
+    }
+    
+    // Update thank you screen parameter
+    if (thankYou) {
+      params.set('thankYou', 'true');
+    } else {
+      params.delete('thankYou');
+    }
+    
+    // Update processing payment parameter
+    if (processing) {
+      params.set('processing', 'true');
+    } else {
+      params.delete('processing');
+    }
+    
+    // Update URL without causing a page reload
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    router.replace(newUrl);
+  }, [searchParams, router]);
+  
+  // Update URL when state changes
+  React.useEffect(() => {
+    updateUrlWithState(activeStep, selectedPaymentMethod, showAddCardForm, showThankYouScreen, showProcessingPayment);
+  }, [activeStep, selectedPaymentMethod, showAddCardForm, showThankYouScreen, showProcessingPayment, updateUrlWithState]);
+
+  // (moved lower) Ensure a setup intent exists after refresh when add card form is visible
+
+  // Stripe hooks
+  const stripe = useStripe();
+  const elements = useElements();
+
+  // GraphQL mutation for creating setup intent
+  const [createSetupIntent, { loading: setupIntentLoading }] = useMutation(CREATE_SETUP_INTENT);
+
+  // GraphQL mutation for saving payment method
+  const [savePaymentMethod, { loading: savePaymentMethodLoading }] = useMutation(SAVE_PAYMENT_METHOD);
+
+  // GraphQL mutation for creating payment intent
+  const [createPaymentIntent, { loading: createPaymentIntentLoading }] = useMutation(CREATE_PAYMENT_INTENT);
+
+  // GraphQL lazy query for getting payment method details
+  const [getPaymentMethodDetails, { loading: paymentMethodDetailsLoading }] = useLazyQuery(GET_PAYMENT_METHOD);
+
+  // GraphQL mutation for removing a card
+  const [removeCard, { loading: removeCardLoading }] = useMutation(REMOVE_CARD);
+
+  // GraphQL query for fetching payment methods
+  const { data: paymentMethodsData, loading: paymentMethodsLoading, refetch: refetchPaymentMethods } = useQuery(LIST_PAYMENT_METHODS);
+
+  // Ensure a setup intent exists after refresh when add card form is visible
+  React.useEffect(() => {
+    const ensureSetupIntent = async () => {
+      if (showAddCardForm && !setupIntentClientSecret) {
+        try {
+          const { data } = await createSetupIntent();
+          if (data?.createSetupIntent?.data?.client_secret) {
+            setSetupIntentClientSecret(data.createSetupIntent.data.client_secret);
+          }
+        } catch (err) {
+          console.error('Error creating setup intent (ensure):', err);
+        }
+      }
+    };
+    ensureSetupIntent();
+  }, [showAddCardForm, setupIntentClientSecret, createSetupIntent]);
+
+  // Transform API data to match component format
+  const existingCards = React.useMemo(() => {
+    if (!paymentMethodsData?.listPaymentMethods?.data?.paymentMethods) {
+      return [];
+    }
+
+    return paymentMethodsData.listPaymentMethods.data.paymentMethods.map((pm: {
+      id: string;
+      type: string;
+      card: {
+        brand: string;
+        last4: string;
+        expMonth: number;
+        expYear: number;
+        funding: string;
+      };
+      created: number;
+    }, index: number) => ({
+      id: pm.id,
+      type: pm.card.brand.toUpperCase(),
+      lastFour: pm.card.last4,
+      expiry: `${pm.card.expMonth.toString().padStart(2, '0')}/${pm.card.expYear.toString().slice(-2)}`,
+      isDefault: index === 0, // First card is default
+      color: pm.card.brand === 'visa' ? '#408bff' : pm.card.brand === 'mastercard' ? '#dc2626' : '#6b7280',
+      label: pm.card.funding === 'debit' ? 'Debit' : pm.card.funding === 'credit' ? 'Credit' : undefined
+    }));
+  }, [paymentMethodsData]);
+
+  // Set default selected payment method when cards are loaded
+  React.useEffect(() => {
+    if (existingCards.length > 0 && !selectedPaymentMethod) {
+      setSelectedPaymentMethod(existingCards[0].id);
+    }
+  }, [existingCards, selectedPaymentMethod]);
+
+  // Fetch payment method details when a payment method is selected
+  React.useEffect(() => {
+    if (selectedPaymentMethod && selectedPaymentMethod !== 'add-new') {
+      getPaymentMethodDetails({
+        variables: {
+          input: {
+            paymentMethodId: selectedPaymentMethod
+          }
+        }
+      }).then(({ data }) => {
+        if (data?.getPaymentMethod?.data) {
+          setPaymentMethodDetails(data.getPaymentMethod.data);
+        }
+      }).catch((error) => {
+        console.error('Error fetching payment method details:', error);
+      });
+    }
+  }, [selectedPaymentMethod, getPaymentMethodDetails]);
+
+  const handleNext = async () => {
+    if (activeStep === 0) {
+      if (selectedPaymentMethod === 'add-new' && setupIntentClientSecret) {
+        // Handle new card setup
+        if (!stripe || !elements) {
+          return;
+        }
+
+        setIsProcessing(true);
+
+        try {
+          // Submit elements first as required by Stripe
+          const { error: submitError } = await elements.submit();
+          
+          if (submitError) {
+            console.error('submit error:', submitError?.message || submitError);
+            setIsProcessing(false);
+            return;
+          }
+                  // Confirm with PaymentElement (PASS the client secret here)
+        const { error, setupIntent } = await stripe.confirmSetup({
+          elements,
+          clientSecret: setupIntentClientSecret!, // 👈 use the one you stored in state
+          confirmParams: {
+            payment_method_data: {
+              billing_details: {
+                name: cardholderName,
+                //address: { country: 'US' },
+              },
+            },
+          },
+          redirect: 'if_required',
+        });
+
+          if (error) {
+            console.error('Error confirming card setup:', error);
+            // Handle error - you might want to show a toast or error message
+          } else if (setupIntent?.status === 'succeeded' && setupIntent.payment_method) {
+            // Card setup successful, now save the payment method
+            try {
+              const { data: saveData } = await savePaymentMethod({
+                variables: {
+                  input: {
+                    paymentMethodId: setupIntent.payment_method as string
+                  }
+                }
+              });
+
+              if (saveData?.savePaymentMethod?.status === 'success') {
+                console.log('Payment method saved successfully:', saveData.savePaymentMethod.data);
+                // Store the saved payment method data for display in review
+                setSavedPaymentMethod(saveData.savePaymentMethod.data);
+                // Update selectedPaymentMethod to use the database ID returned from SavePaymentMethod
+                setSelectedPaymentMethod(saveData.savePaymentMethod.data.id);
+                // Refresh the payment methods list to show the new card
+                await refetchPaymentMethods();
+                // Proceed to next step
+                setActiveStep(1);
+              } else {
+                console.error('Failed to save payment method:', saveData?.savePaymentMethod?.message);
+                // Still proceed to next step as the card was set up successfully
+                setActiveStep(1);
+              }
+            } catch (saveError) {
+              console.error('Error saving payment method:', saveError);
+              // Still proceed to next step as the card was set up successfully
+              setActiveStep(1);
+            }
+          } else {
+            // Card setup successful, proceed to next step
+            setActiveStep(1);
+          }
+        } catch (error) {
+          console.error('Error during card setup:', error);
+        } finally {
+          setIsProcessing(false);
+        }
+      } else {
+        // Handle existing card selection - fetch card details
+        try {
+          const { data } = await getPaymentMethodDetails({
+            variables: {
+              input: {
+                paymentMethodId: selectedPaymentMethod
+              }
+            }
+          });
+
+          if (data?.getPaymentMethod?.status === 'success') {
+            console.log('Payment method details fetched:', data.getPaymentMethod.data);
+            setSelectedExistingCardDetails(data.getPaymentMethod.data);
+            setActiveStep(1);
+          } else {
+            console.error('Failed to fetch payment method details:', data?.getPaymentMethod?.message);
+            setActiveStep(1); // Still proceed to review
+          }
+        } catch (error) {
+          console.error('Error fetching payment method details:', error);
+          setActiveStep(1); // Still proceed to review
+        }
+      }
+    } else {
+      // Handle "Confirm and Pay" logic
+      // Step 2: Switch to "Processing Payment" screen immediately
+      setShowProcessingPayment(true);
+      setPaymentError(null);
+
+      try {
+        // Determine which payment method to use
+        let paymentMethodId: string;
+        
+        if (selectedPaymentMethod === 'add-new' && savedPaymentMethod?.stripePaymentMethodId) {
+          // Use the newly saved payment method
+          paymentMethodId = savedPaymentMethod.stripePaymentMethodId;
+        } else {
+          // Use an existing payment method
+          // Note: For existing cards, you might need to get the stripePaymentMethodId differently
+          // This is a placeholder - you'll need to modify based on your data structure
+          paymentMethodId = selectedPaymentMethod; // This might need adjustment
+        }
+
+        // Step 3: Create payment intent
+        const { data: paymentIntentData } = await createPaymentIntent({
+          variables: {
+            input: {
+              amount: 5000,
+              currency: "usd",
+              paymentMethodId: paymentMethodId,
+              metadata: {
+                assessmentId: paymentMetadata?.assessmentId || "68d4e8bb524f42841d38163e",
+                assessmentName: paymentMetadata?.assessmentName || "Cognitive Skills Test"
+              }
+            }
+          }
+        });
+
+        if (paymentIntentData?.createPaymentIntent?.status === 'success') {
+          console.log('Payment intent created successfully:', paymentIntentData.createPaymentIntent.data);
+          
+          // Step 4: Confirm payment with Stripe using client_secret
+          if (stripe) {
+            const { error: confirmError, paymentIntent } = await stripe.confirmCardPayment(
+              paymentIntentData.createPaymentIntent.data.client_secret,
+              {
+                payment_method: paymentMethodId
+              }
+            );
+
+            if (confirmError) {
+              console.error('Payment confirmation failed:', confirmError);
+              // Step 6: Show error and go back to Review
+              setPaymentError(confirmError.message || 'Payment confirmation failed');
+              setShowProcessingPayment(false);
+              toast.error(confirmError.message || 'Payment confirmation failed');
+            } else if (paymentIntent?.status === 'succeeded') {
+              console.log('Payment confirmed successfully:', paymentIntent);
+              // Step 5: Show "Thank You / Access Unlocked" screen
+              setShowProcessingPayment(false);
+              setShowThankYouScreen(true);
+              
+              // Store payment details for later use (don't call onComplete yet)
+              const selectedCard = existingCards.find(card => card.id === selectedPaymentMethod);
+              setCompletedPaymentData({
+                selectedPaymentMethod,
+                selectedCard,
+                cardholderName, 
+                cardNumber: '', 
+                expiryDate: '', 
+                cvc: '',
+                saveCardForFuture: false,
+                paymentIntentId: paymentIntent.id
+              });
+            } else {
+              console.error('Payment confirmation failed with status:', paymentIntent?.status);
+              // Step 6: Show error and go back to Review
+              setPaymentError(`Payment failed with status: ${paymentIntent?.status}`);
+              setShowProcessingPayment(false);
+              toast.error(`Payment failed with status: ${paymentIntent?.status}`);
+            }
+          } else {
+            console.error('Stripe not available');
+            // Step 6: Show error and go back to Review
+            setPaymentError('Stripe is not available');
+            setShowProcessingPayment(false);
+            toast.error('Stripe is not available');
+          }
+        } else {
+          console.error('Payment intent creation failed:', paymentIntentData?.createPaymentIntent?.message);
+          // Step 6: Show error and go back to Review
+          setPaymentError(paymentIntentData?.createPaymentIntent?.message || 'Payment intent creation failed');
+          setShowProcessingPayment(false);
+          toast.error(paymentIntentData?.createPaymentIntent?.message || 'Payment intent creation failed');
+        }
+      } catch (error) {
+        console.error('Error creating payment intent:', error);
+        // Step 6: Show error and go back to Review
+        setPaymentError('An unexpected error occurred during payment processing');
+        setShowProcessingPayment(false);
+        toast.error('An unexpected error occurred during payment processing');
+      }
+    }
+  };
+
+  const handleBack = () => {
+    if (activeStep > 0) {
+      setActiveStep(activeStep - 1);
+    }
+  };
+
+  const handleCancel = () => {
+    // Clear URL parameters and navigate directly
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('step');
+    params.delete('paymentMethod');
+    params.delete('addCard');
+    params.delete('thankYou');
+    params.delete('processing');
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    router.replace(newUrl);
+    // Call onCancel immediately without delay
+    onCancel?.();
+  };
+
+  const handleMenuClick = (event: React.MouseEvent<HTMLElement>, cardId: string) => {
+    event.stopPropagation(); // Prevent card selection
+    setAnchorEl(event.currentTarget);
+    setSelectedCardId(cardId);
+  };
+
+  const handleMenuClose = () => {
+    setAnchorEl(null);
+    setSelectedCardId(null);
+  };
+
+  const handleDeleteClick = () => {
+    setAnchorEl(null); // Close the menu but keep selectedCardId
+    setShowDeleteDialog(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (selectedCardId) {
+      try {
+        const { data } = await removeCard({
+          variables: {
+            input: {
+              paymentMethodId: selectedCardId
+            }
+          }
+        });
+
+        if (data?.removeCard?.status === 'success') {
+          console.log('Card deleted successfully:', data.removeCard);
+          toast.success('Card deleted successfully');
+          
+          // Refresh payment methods list
+          await refetchPaymentMethods();
+          
+          // If the deleted card was selected, clear selection
+          if (selectedPaymentMethod === selectedCardId) {
+            setSelectedPaymentMethod('');
+          }
+        } else {
+          //console.error('Failed to delete card:', data?.removeCard?.message);
+          toast.error(data?.removeCard?.message || 'Failed to delete card');
+        }
+      } catch (error) {
+        console.error('Error deleting card:', error);
+        toast.error('Failed to delete card');
+      }
+    }
+    setShowDeleteDialog(false);
+    setSelectedCardId(null);
+  };
+
+  const handleDeleteCancel = () => {
+    setShowDeleteDialog(false);
+    setSelectedCardId(null);
+  };
+
+  const handlePaymentMethodChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    setSelectedPaymentMethod(value);
+    if (value === 'add-new') {
+      setShowAddCardForm(true);
+    } else {
+      setShowAddCardForm(false);
+      // Reset form fields when selecting saved card
+      setCardholderName('');
+    }
+  };
+
+  const handleAddNewCard = async () => {
+    setSelectedPaymentMethod('add-new');
+    setShowAddCardForm(true);
+    // Reset form fields when adding new card
+    setCardholderName('');
+    
+    try {
+      // Create setup intent when user clicks "Add new card"
+      const { data } = await createSetupIntent();
+      
+      if (data?.createSetupIntent?.data?.client_secret) {
+        setSetupIntentClientSecret(data.createSetupIntent.data.client_secret);
+      }
+    } catch (error) {
+      console.error('Error creating setup intent:', error);
+    }
+  };
+
+
+  // Custom stepper component to match the design exactly
+  const CustomStepper = () => (
+    <Box sx={{
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      mb: 4,
+      width: '100%',
+      maxWidth: '300px',
+      mx: 'auto'
+    }}>
+      {/* Step 1 - Payment Info */}
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+        <Box sx={{
+          width: 32,
+          height: 32,
+          borderRadius: '50%',
+          backgroundColor: activeStep >= 0 ? '#408bff' : '#e0e0e0',
+          color: '#fff',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '14px',
+          fontWeight: 600,
+          fontFamily: 'var(--font-inter), sans-serif'
+        }}>
+          1
+        </Box>
+        <Typography sx={{
+          fontSize: '14px',
+          fontFamily: 'var(--font-inter), sans-serif',
+          color: activeStep >= 0 ? '#1a1a1a' : '#999',
+          fontWeight: activeStep === 0 ? 600 : 400
+        }}>
+          Payment Info
+        </Typography>
+      </Box>
+
+      {/* Connecting Line 1 */}
+      <Box sx={{
+        flex: 1,
+        height: '2px',
+        width: '100%',
+        backgroundColor: activeStep >= 1 ? '#408bff' : '#e0e0e0',
+        mx: 0,
+        mt: -3,
+        mr: 2
+      }} />
+
+      {/* Step 2 - Review */}
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+        <Box sx={{
+          width: 32,
+          height: 32,
+          borderRadius: '50%',
+          backgroundColor: activeStep >= 1 ? '#408bff' : '#e0e0e0',
+          color: activeStep >= 1 ? '#fff' : '#999',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '14px',
+          fontWeight: 600,
+          fontFamily: 'var(--font-inter), sans-serif'
+        }}>
+          2
+        </Box>
+        <Typography sx={{
+          fontSize: '14px',
+          fontFamily: 'var(--font-inter), sans-serif',
+          color: activeStep >= 1 ? '#1a1a1a' : '#999',
+          fontWeight: activeStep === 1 ? 600 : 400
+        }}>
+          Review
+        </Typography>
+      </Box>
+    </Box>
+  );
+
+  const options = {
+  layout: "tabs" as const,
+  defaultValues: {
+    billingDetails: {
+      address: { country: "US" },
+    },
+  },
+  // fields: {
+  //   billingDetails: {
+  //     // If you show Stripe inputs for these, set 'auto'.
+  //     // If you collect them yourself, set 'never' and pass them in confirmSetup().
+  //     name: "never",     // you already have a TextField for name
+  //     email: "never",    // you're not using Link's email
+  //     address: "auto",   // let Stripe collect address (includes postal code)
+  //   },
+  // },
+  wallets: {
+    applePay: "never" as const,
+    googlePay: "never" as const,
+    link: "never" as const,
+  },
+  terms: {
+    card: "never" as const,
+  },
+};
+
+  // Processing Payment Screen Component
+  const ProcessingPaymentScreen = () => (
+    <Box sx={{ 
+      minHeight: '100vh', 
+      backgroundColor: '#f5f5f5',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: '100vw',
+      maxWidth: '100vw',
+      px: 2,
+      margin: 0,
+      paddingLeft: 2,
+      paddingRight: 2
+    }}>
+      <Paper sx={{ 
+        p: 6, 
+        borderRadius: '16px',
+        boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
+        backgroundColor: '#fff',
+        border: '1px solid #e9ecef',
+        maxWidth: '400px',
+        minWidth: '320px',
+        width: 'calc(100vw - 32px)',
+        mx: 'auto',
+        textAlign: 'center'
+      }}>
+        <CircularProgress 
+          size={60} 
+          sx={{ 
+            color: '#408bff',
+            mb: 3,
+            '& .MuiCircularProgress-circle': {
+              strokeLinecap: 'round',
+            }
+          }} 
+        />
+        <Typography 
+          variant="h5" 
+          sx={{ 
+            fontWeight: 600,
+            color: '#1a1a1a',
+            mb: 2,
+            fontSize: '24px',
+            fontFamily: 'var(--font-inter), sans-serif'
+          }}
+        >
+          Processing Payment
+        </Typography>
+        <Typography 
+          variant="body1" 
+          sx={{ 
+            color: '#6b7280',
+            fontSize: '16px',
+            fontFamily: 'var(--font-inter), sans-serif',
+            lineHeight: 1.5
+          }}
+        >
+          Please wait while we securely process your transaction.
+        </Typography>
+      </Paper>
+    </Box>
+  );
+
+  // Thank You / Access Unlocked Screen Component
+  const ThankYouScreenComponent = () => (
+    <ThankYouScreen
+      variant="fullscreen"
+      assessmentId={assessmentId}
+      onBack={() => {
+        // Clear URL parameters
+        const params = new URLSearchParams(searchParams.toString());
+        params.delete('step');
+        params.delete('paymentMethod');
+        params.delete('addCard');
+        params.delete('thankYou');
+        params.delete('processing');
+        const newUrl = `${window.location.pathname}?${params.toString()}`;
+        router.replace(newUrl);
+        // Call onComplete with the stored payment data immediately
+        if (completedPaymentData) {
+          onComplete?.(completedPaymentData);
+        } else {
+          // Fallback if no payment data is stored
+          onComplete?.({ 
+            selectedPaymentMethod: '',
+            cardholderName: '', 
+            cardNumber: '', 
+            expiryDate: '', 
+            cvc: '',
+            saveCardForFuture: false
+          });
+        }
+      }}
+    />
+  );
+
+  // Show Processing Payment screen
+  if (showProcessingPayment) {
+    return <ProcessingPaymentScreen />;
+  }
+
+  // Show Thank You screen
+  if (showThankYouScreen) {
+    return <ThankYouScreenComponent />;
+  }
+
+  return (
+    <>
+      {/* <style jsx global>{`
+        
+        [data-testid="link-authentication-element"],
+        .p-LinkAuthenticationElement,
+        [class*="LinkAuthenticationElement"],
+        [class*="link-authentication"],
+        [class*="LinkAuthentication"],
+        .StripeElement--LinkAuthenticationElement {
+          display: none !important;
+        }
+        
+       
+        [class*="LinkPromotion"],
+        [class*="link-promotion"],
+        [data-testid="link-promotion"] {
+          display: none !important;
+        }
+      `}</style> */}
+    <Box sx={{ 
+      minHeight: '100vh', 
+      backgroundColor: '#f5f5f5',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: '100vw',
+      maxWidth: '100vw',
+      px: 2,
+      margin: 0,
+      paddingLeft: 2,
+      paddingRight: 2
+    }}>
+      <Paper sx={{ 
+        p: 6, 
+        borderRadius: '16px',
+        boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
+        backgroundColor: '#fff',
+        border: '1px solid #e9ecef',
+        maxWidth: '700px',
+        minWidth: '320px',
+        width: 'calc(100vw - 32px)',
+        mx: 'auto'
+      }}>
+        {/* Header */}
+        <Box sx={{ textAlign: 'center', mb: 5 }}>
+          <Typography 
+            variant="h4" 
+            sx={{ 
+              fontWeight: 700,
+              color: '#1a1a1a',
+              mb: 1,
+              fontSize: '32px',
+              fontFamily: 'var(--font-inter), sans-serif'
+            }}
+          >
+            Secure Checkout
+          </Typography>
+          <Typography 
+            variant="body1" 
+            sx={{ 
+              color: '#6b7280',
+              fontSize: '16px',
+              fontFamily: 'var(--font-inter), sans-serif'
+            }}
+          >
+            Please enter your details to complete your purchase.
+          </Typography>
+        </Box>
+
+        {/* Custom Stepper */}
+        <CustomStepper />
+
+              {/* Content based on active step */}
+              {activeStep === 0 && (
+                <Box sx={{ mb: 5 }}>
+                  {!showAddCardForm ? (
+                    <>
+                      <Typography 
+                        variant="h6" 
+                        sx={{ 
+                          mb: 3,
+                          fontWeight: 600,
+                          color: '#1a1a1a',
+                          fontSize: '18px',
+                          fontFamily: 'var(--font-inter), sans-serif'
+                        }}
+                      >
+                        Select Payment Method
+                      </Typography>
+
+                      {paymentMethodsLoading ? (
+                        <Box sx={{ 
+                          display: 'flex', 
+                          flexDirection: 'column', 
+                          alignItems: 'center', 
+                          justifyContent: 'center', 
+                          py: 6,
+                          gap: 2
+                        }}>
+                          <CircularProgress 
+                            size={40} 
+                            sx={{ 
+                              color: '#408bff',
+                              '& .MuiCircularProgress-circle': {
+                                strokeLinecap: 'round',
+                              }
+                            }} 
+                          />
+                          <Typography 
+                            variant="body2" 
+                            sx={{ 
+                              color: '#6b7280',
+                              fontFamily: 'var(--font-inter), sans-serif',
+                              fontSize: '14px'
+                            }}
+                          >
+                            Loading payment methods...
+                          </Typography>
+                        </Box>
+                      ) : (
+            
+                <FormControl component="fieldset" sx={{ width: '100%' }}>
+                  <RadioGroup
+                    value={selectedPaymentMethod}
+                    onChange={handlePaymentMethodChange}
+                    sx={{ gap: 2 }}
+                  >
+                     {/* Add New Card Option */}
+                    {/* Enhanced Add New Card Option */}
+                    <Card
+                       sx={{
+                         border: '2px dashed #d1d5db',
+                         borderRadius: '20px',
+                         cursor: 'pointer',
+                         transition: 'all 0.2s ease',
+                         background: 'linear-gradient(145deg, #ffffff, #f8fafc)',
+                         position: 'relative',
+                         overflow: 'hidden',
+                         boxShadow: '0 2px 6px rgba(0,0,0,0.05), 0 1px 3px rgba(0,0,0,0.1)',
+                         '&:hover': {
+                           borderColor: '#408bff',
+                           background: 'linear-gradient(145deg, #f8faff, #e6f2ff)',
+                           transform: 'translateY(-1px)',
+                           boxShadow: '0 4px 12px rgba(64, 139, 255, 0.1), 0 2px 6px rgba(0,0,0,0.1)',
+                           '& .add-glow': {
+                             opacity: 0.3,
+                             transform: 'scale(0.5)'
+                           },
+                           '& .add-icon': {
+                             transform: 'scale(1.15) rotate(90deg)',
+                             color: '#408bff',
+                             backgroundColor: 'rgba(64, 139, 255, 0.1)'
+                           },
+                           '& .add-text': {
+                             color: '#408bff'
+                           },
+                           '& .add-subtitle': {
+                             color: '#6b7280'
+                           }
+                         }
+                       }}
+                      onClick={handleAddNewCard}
+                    >
+                      {/* Animated Glow Effect */}
+                      <Box
+                        className="add-glow"
+                        sx={{
+                          position: 'absolute',
+                          top: -50,
+                          right: -50,
+                          width: 100,
+                          height: 100,
+                          borderRadius: '50%',
+                          background: 'radial-gradient(circle, rgba(64, 139, 255, 0.15), transparent)',
+                          opacity: 0,
+                          transform: 'scale(0.8)',
+                          transition: 'all 0.4s ease',
+                          zIndex: 0
+                        }}
+                      />
+
+                      {/* Decorative Background Elements */}
+                      <Box
+                        sx={{
+                          position: 'absolute',
+                          top: -30,
+                          right: -30,
+                          width: 80,
+                          height: 80,
+                          borderRadius: '50%',
+                          background: 'linear-gradient(135deg, rgba(64, 139, 255, 0.08), rgba(64, 139, 255, 0.03))',
+                          opacity: 0.6,
+                          zIndex: 0
+                        }}
+                      />
+                      <Box
+                        sx={{
+                          position: 'absolute',
+                          bottom: -20,
+                          left: -20,
+                          width: 60,
+                          height: 60,
+                          borderRadius: '50%',
+                          background: 'linear-gradient(135deg, rgba(64, 139, 255, 0.06), rgba(64, 139, 255, 0.02))',
+                          opacity: 0.4,
+                          zIndex: 0
+                        }}
+                      />
+                      
+                      <CardContent sx={{ p: 3, textAlign: 'center', position: 'relative', zIndex: 1, height: '85px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+                          <Box
+                             sx={{
+                               width: 48,
+                               height: 48,
+                               borderRadius: '50%',
+                               background: 'linear-gradient(145deg, #f8faff, #e6f2ff)',
+                               display: 'flex',
+                               alignItems: 'center',
+                               justifyContent: 'center',
+                               border: '2px solid #e5e7eb',
+                               transition: 'all 0.2s ease',
+                               boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                               position: 'relative',
+                               '&::before': {
+                                 content: '""',
+                                 position: 'absolute',
+                                 top: -2,
+                                 left: -2,
+                                 right: -2,
+                                 bottom: -2,
+                                 borderRadius: '50%',
+                                 background: 'linear-gradient(145deg, #408bff, #3574e0)',
+                                 opacity: 0,
+                                 transition: 'opacity 0.2s ease',
+                                 zIndex: -1
+                               }
+                             }}
+                            className="add-icon"
+                          >
+                            <AddIcon sx={{ color: '#6b7280', fontSize: '20px', transition: 'all 0.2s ease' }} />
+                          </Box>
+                          
+                          <Box>
+                            <Typography
+                              variant="h6"
+                              sx={{
+                                color: '#6b7280',
+                                fontFamily: 'var(--font-inter), sans-serif',
+                                fontWeight: 700,
+                                fontSize: '16px',
+                                mb: 0.5,
+                                transition: 'all 0.3s ease',
+                                letterSpacing: '0.3px'
+                              }}
+                              className="add-text"
+                            >
+                              Add New Card
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </CardContent>
+                     </Card>
+                    {/* Existing Cards */}
+                    {existingCards.map((card) => (
+                      <Card
+                        key={card.id}
+                        sx={{
+                          border: selectedPaymentMethod === card.id ? '2px solid #408bff' : '1px solid #e0e0e0',
+                          borderRadius: '12px',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease',
+                          backgroundColor: selectedPaymentMethod === card.id ? '#e3f2fd' : '#fff',
+                          '&:hover': {
+                            borderColor: '#408bff',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                          }
+                        }}
+                        onClick={() => setSelectedPaymentMethod(card.id)}
+                      >
+                        <CardContent sx={{ p: 1.5 }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, minHeight: '48px' }}>
+                            <Radio
+                              checked={selectedPaymentMethod === card.id}
+                              value={card.id}
+                              sx={{
+                                color: '#408bff',
+                                '&.Mui-checked': {
+                                  color: '#408bff',
+                                }
+                              }}
+                            />
+                            <Box sx={{ flex: 1 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                  <PaymentIcon brand={card.type} size={40}  />
+                                  <Box>
+                                    <Typography
+                                      variant="body2"
+                                      sx={{
+                                        fontFamily: 'var(--font-inter), sans-serif',
+                                        fontWeight: 500,
+                                        color: '#1a1a1a',
+                                        fontSize: '16px',
+                                        mb: 0.25
+                                      }}
+                                    >
+                                      •••• •••• •••• {card.lastFour}
+                                    </Typography>
+                                    <Typography
+                                      variant="body2"
+                                      sx={{
+                                        color: '#6b7280',
+                                        fontFamily: 'var(--font-inter), sans-serif',
+                                        fontSize: '14px',
+                                        fontWeight: 400
+                                      }}
+                                    >
+                                      {card.type}
+                                    </Typography>
+                                  </Box>
+                                </Box>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <Typography
+                                    variant="body2"
+                                    sx={{
+                                      color: '#6b7280',
+                                      fontFamily: 'var(--font-inter), sans-serif',
+                                      fontSize: '14px'
+                                    }}
+                                  >
+                                    Exp {card.expiry}
+                                  </Typography>
+                                  <Box
+                                    onClick={(e) => handleMenuClick(e, card.id)}
+                                    sx={{ 
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      padding: '4px',
+                                      borderRadius: '4px',
+                                      '&:hover': {
+                                        backgroundColor: 'rgba(0,0,0,0.04)'
+                                      }
+                                    }}
+                                  >
+                                    <MoreVertIcon 
+                                      sx={{ 
+                                        color: '#9ca3af', 
+                                        fontSize: '20px',
+                                        '&:hover': {
+                                          color: '#6b7280'
+                                        }
+                                      }} 
+                                    />
+                                  </Box>
+                                </Box>
+                              </Box>
+                            </Box>
+                          </Box>
+                        </CardContent>
+                      </Card>
+                    ))}
+
+
+                        </RadioGroup>
+                      </FormControl>
+                      )}
+                    </>
+                  ) : (
+              <>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
+                  <Button
+                    variant="text"
+                    onClick={() => setShowAddCardForm(false)}
+                    sx={{
+                      color: '#6b7280',
+                      textTransform: 'none',
+                      fontSize: '14px',
+                      fontFamily: 'var(--font-inter), sans-serif',
+                      fontWeight: 500,
+                      padding: '4px 8px',
+                      '&:hover': {
+                        backgroundColor: 'rgba(0,0,0,0.04)'
+                      }
+                    }}
+                  >
+                    ← Back to saved cards
+                  </Button>
+          </Box>
+
+                <Typography
+                  variant="h6"
+                  sx={{
+                    mb: 3,
+                    fontWeight: 600,
+                    color: '#1a1a1a',
+                    fontSize: '18px',
+                    fontFamily: 'var(--font-inter), sans-serif'
+                  }}
+                >
+                  Add New Card Details
+                </Typography>
+
+            {/* Cardholder Name */}
+            <Box sx={{ mb: 3 }}>
+              <Typography
+                    variant="body2"
+                sx={{
+                      mb: 1,
+                  fontWeight: 600,
+                  color: '#1a1a1a',
+                      fontSize: '14px',
+                  fontFamily: 'var(--font-inter), sans-serif'
+                }}
+              >
+                Cardholder Name
+              </Typography>
+
+              <TextField
+                name="cardholderName"
+                value={cardholderName}
+                onChange={(e) => setCardholderName(e.target.value)}
+                placeholder="Sarah Johnson"
+                fullWidth
+                slotProps={{
+                  input: {
+                    startAdornment: (
+                      <InputAdornment position="start" sx={{ pr: 0.5 }}>
+                        <PersonIcon fontSize="small" style={{ opacity: 0.7 }} />
+                        <Box sx={{ height: 28, width: 1.3, bgcolor: '#b0b0b0', ml: 1 }} />
+                      </InputAdornment>
+                    ),
+                  }
+                }}
+                variant="outlined"
+                sx={{
+                  '& .MuiOutlinedInput-root': {
+                    borderRadius: '12px',
+                    backgroundColor: '#fff',
+                    fontSize: '1rem',
+                    minHeight: '56px',
+                    '& fieldset': { borderColor: '#a8a8a8' },
+                    '&:hover fieldset': { borderColor: '#808080' },
+                    '&.Mui-focused fieldset': { borderColor: '#4285F4' },
+                  },
+                  '& .MuiOutlinedInput-input': { padding: '14px 10px' },
+                }}
+              />
+            </Box>
+
+             {/* Payment Element */}
+            <Box sx={{ mb: 3 }}>
+              <Typography
+                 variant="body2"
+                sx={{
+                   mb: 1,
+                  fontWeight: 600,
+                  color: '#1a1a1a',
+                   fontSize: '14px',
+                  fontFamily: 'var(--font-inter), sans-serif'
+                }}
+              >
+                 Payment Details
+              </Typography>
+
+                <Box sx={{
+                  border: '1px solid #d1d5db',
+                    borderRadius: '12px',
+                    backgroundColor: '#fff',
+                  padding: '16px',
+                  '&:hover': {
+                    borderColor: '#9ca3af'
+                  },
+                  '&:focus-within': {
+                    borderColor: '#3b82f6',
+                    boxShadow: '0 0 0 3px rgba(59, 130, 246, 0.1)'
+                  },
+                  // Hide Stripe Link section
+                  '& [data-testid="link-authentication-element"]': {
+                    display: 'none !important'
+                  },
+                  '& .p-LinkAuthenticationElement': {
+                    display: 'none !important'
+                  },
+                  '& [class*="LinkAuthenticationElement"]': {
+                    display: 'none !important'
+                  }
+                }}>
+                  <PaymentElement 
+                    options={options}
+                    onChange={(event: StripePaymentElementChangeEvent) => {
+                      setPaymentElementComplete(!!event?.complete);
+                    }}
+                  />
+                </Box>
+             </Box>
+              </>
+            )}
+            </Box>
+        )}
+
+              {activeStep === 1 && (
+                <Box sx={{ mb: 5 }}>
+
+
+                  {/* Order Summary */}
+                  <Card sx={{ mb: 3, border: '1px solid #e0e0e0', borderRadius: '12px' }}>
+                    <CardContent sx={{ p: 3 }}>
+                      <Typography
+                        variant="subtitle1"
+                        sx={{
+                          fontWeight: 600,
+                          color: '#1a1a1a',
+                          fontFamily: 'var(--font-inter), sans-serif',
+                          mb: 2
+                        }}
+                      >
+                        Order Summary
+                      </Typography>
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          color: '#6b7280',
+                          fontFamily: 'var(--font-inter), sans-serif',
+                          mb: 1
+                        }}
+                      >
+                        Description: {paymentMetadata?.assessmentName || 'Full Hospital Assessment Access'}
+                      </Typography>
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          color: '#6b7280',
+                          fontFamily: 'var(--font-inter), sans-serif'
+                        }}
+                      >
+                        Total Amount: <span style={{ color: '#408bff', fontWeight: 600, fontSize: '16px' }}>$5,000 USD</span>
+                      </Typography>
+                    </CardContent>
+                  </Card>
+
+                  {/* Payment Details */}
+                  <Card sx={{ mb: 3, border: '1px solid #e0e0e0', borderRadius: '12px' }}>
+                    <CardContent sx={{ p: 3 }}>
+                      <Typography
+                        variant="subtitle1"
+                        sx={{
+                          fontWeight: 600,
+                          color: '#1a1a1a',
+                          fontFamily: 'var(--font-inter), sans-serif',
+                          mb: 2
+                        }}
+                      >
+                        Payment Details
+                      </Typography>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            color: '#6b7280',
+                            fontFamily: 'var(--font-inter), sans-serif'
+                          }}
+                        >
+                          Card Holder: {paymentMethodDetails?.cardholderName || cardholderName || 'Sarah Johnson'}
+                        </Typography>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            color: '#6b7280',
+                            fontFamily: 'var(--font-inter), sans-serif'
+                          }}
+                        >
+                          Card Number: **** **** **** {paymentMethodDetails?.card?.last4 || savedPaymentMethod?.card?.last4 || selectedExistingCardDetails?.card?.last4 || '5321'}
+                        </Typography>
+                        {(paymentMethodDetails?.card?.brand || savedPaymentMethod?.card?.brand || selectedExistingCardDetails?.card?.brand) && (
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              color: '#6b7280',
+                              fontFamily: 'var(--font-inter), sans-serif'
+                            }}
+                          >
+                            Card Type: {(paymentMethodDetails?.card?.brand || savedPaymentMethod?.card?.brand || selectedExistingCardDetails?.card?.brand || '').toUpperCase()}
+                          </Typography>
+                        )}
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            color: '#6b7280',
+                            fontFamily: 'var(--font-inter), sans-serif'
+                          }}
+                        >
+                          Email: {user?.email || 'john_sarah@gmail.com'}
+                        </Typography>
+                      </Box>
+                    </CardContent>
+                  </Card>
+
+                  {/* Security Badge */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, mt: 3 }}>
+                    <SecurityIcon sx={{ color: '#10b981', fontSize: '20px' }} />
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        color: '#10b981',
+                        fontFamily: 'var(--font-inter), sans-serif',
+                        fontSize: '14px',
+                        fontWeight: 500
+                      }}
+                    >
+                      Secured by industry-standard encryption
+                    </Typography>
+                  </Box>
+                </Box>
+              )}
+
+        {/* Action Buttons */}
+        <Box sx={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center'
+        }}>
+          <Button
+            onClick={handleCancel}
+            sx={{
+              color: '#408bff',
+              textTransform: 'none',
+              fontSize: '14px',
+              fontFamily: 'var(--font-inter), sans-serif',
+              fontWeight: 500,
+              padding: '8px 0',
+              '&:hover': {
+                backgroundColor: 'transparent',
+                textDecoration: 'underline'
+              }
+            }}
+          >
+            Cancel and return to home
+          </Button>
+
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            {activeStep > 0 && (
+              <Button
+                variant="outlined"
+                onClick={handleBack}
+                sx={{
+                  borderColor: '#408bff',
+                  color: '#408bff',
+                  textTransform: 'none',
+                  fontSize: '14px',
+                  fontFamily: 'var(--font-inter), sans-serif',
+                  fontWeight: 500,
+                  borderRadius: '8px',
+                  padding: '12px 24px',
+                  '&:hover': {
+                    borderColor: '#3574e0',
+                    backgroundColor: 'rgba(64, 139, 255, 0.04)'
+                  }
+                }}
+              >
+                Back
+              </Button>
+            )}
+
+             <Button
+               variant="contained"
+               onClick={handleNext}
+              disabled={
+                isProcessing || setupIntentLoading || savePaymentMethodLoading || createPaymentIntentLoading || paymentMethodDetailsLoading || (
+                  activeStep === 0 && (
+                    selectedPaymentMethod === 'add-new'
+                      ? (!cardholderName.trim() || !setupIntentClientSecret || !paymentElementComplete)
+                      : !selectedPaymentMethod
+                  )
+                )
+              }
+              sx={{
+                backgroundColor: '#408bff',
+                color: 'white',
+                textTransform: 'none',
+                fontSize: '14px',
+                fontFamily: 'var(--font-inter), sans-serif',
+                fontWeight: 500,
+                borderRadius: '8px',
+                padding: '12px 24px',
+                boxShadow: 'none',
+                '&:hover': {
+                  backgroundColor: '#3574e0',
+                  boxShadow: 'none'
+                },
+                '&:disabled': {
+                  backgroundColor: '#e0e0e0',
+                  color: '#999'
+                }
+              }}
+             >
+                {isProcessing || setupIntentLoading || savePaymentMethodLoading || createPaymentIntentLoading || paymentMethodDetailsLoading
+                  ? 'Processing...' 
+                  : activeStep === 1 
+                    ? 'Confirm and Pay' 
+                    : 'Next'
+                }
+             </Button>
+          </Box>
+        </Box>
+      </Paper>
+
+      {/* Three-dot Menu */}
+      <Menu
+        anchorEl={anchorEl}
+        open={Boolean(anchorEl)}
+        onClose={handleMenuClose}
+        anchorOrigin={{
+          vertical: 'bottom',
+          horizontal: 'right',
+        }}
+        transformOrigin={{
+          vertical: 'top',
+          horizontal: 'right',
+        }}
+        PaperProps={{
+          sx: {
+            borderRadius: '8px',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+            border: '1px solid #e0e0e0',
+            minWidth: '120px'
+          }
+        }}
+      >
+        <MenuItem 
+          onClick={handleDeleteClick}
+          sx={{
+            color: '#dc2626',
+            fontSize: '14px',
+            fontFamily: 'var(--font-inter), sans-serif',
+            '&:hover': {
+              backgroundColor: '#fef2f2'
+            }
+          }}
+        >
+          <DeleteIcon sx={{ fontSize: '16px', mr: 1 }} />
+          Remove
+        </MenuItem>
+      </Menu>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={showDeleteDialog}
+        onClose={handleDeleteCancel}
+        PaperProps={{
+          sx: {
+            borderRadius: '12px',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+            minWidth: '400px'
+          }
+        }}
+      >
+        <DialogTitle sx={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          pb: 1
+        }}>
+          <Typography sx={{
+            fontWeight: 600,
+            fontSize: '18px',
+            fontFamily: 'var(--font-inter), sans-serif',
+            color: '#1a1a1a'
+          }}>
+            Are you sure you want to remove this card?
+          </Typography>
+          <IconButton
+            onClick={handleDeleteCancel}
+            sx={{
+              color: '#6b7280',
+              '&:hover': {
+                backgroundColor: 'rgba(0,0,0,0.04)'
+              }
+            }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        
+        <DialogContent sx={{ pt: 2 }}>
+          <Typography sx={{
+            color: '#6b7280',
+            fontSize: '14px',
+            fontFamily: 'var(--font-inter), sans-serif',
+            lineHeight: 1.5
+          }}>
+            This action cannot be undone. The card will be permanently removed from your account.
+          </Typography>
+        </DialogContent>
+        
+        <DialogActions sx={{ p: 3, pt: 2, gap: 2 }}>
+          <Button
+            onClick={handleDeleteCancel}
+            variant="outlined"
+            sx={{
+              borderColor: '#408bff',
+              color: '#408bff',
+              textTransform: 'none',
+              fontSize: '14px',
+              fontFamily: 'var(--font-inter), sans-serif',
+              fontWeight: 500,
+              borderRadius: '8px',
+              padding: '10px 20px',
+              '&:hover': {
+                borderColor: '#3574e0',
+                backgroundColor: 'rgba(64, 139, 255, 0.04)'
+              }
+            }}
+          >
+            CANCEL
+          </Button>
+           <Button
+             onClick={handleDeleteConfirm}
+             variant="outlined"
+             disabled={removeCardLoading}
+             sx={{
+               borderColor: '#dc2626',
+               color: '#dc2626',
+               textTransform: 'none',
+               fontSize: '14px',
+               fontFamily: 'var(--font-inter), sans-serif',
+               fontWeight: 500,
+               borderRadius: '8px',
+               padding: '10px 20px',
+               '&:hover': {
+                 borderColor: '#b91c1c',
+                 backgroundColor: 'rgba(220, 38, 38, 0.04)'
+               },
+               '&:disabled': {
+                 borderColor: '#e0e0e0',
+                 color: '#999',
+                 backgroundColor: '#f5f5f5'
+               }
+             }}
+           >
+             {removeCardLoading ? 'Removing...' : 'REMOVE'}
+           </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+    </>
+  );
+};
+
+// Main CheckoutStepper component with Stripe Elements wrapper
+const CheckoutStepper: React.FC<CheckoutStepperProps> = (props) => {
+    // Fetch Stripe public key from API
+  
+    const { data: publicKeyData } = useQuery(GET_PUBLIC_KEY);
+
+    // Initialize Stripe with the fetched public key
+    const stripePromise = publicKeyData?.getPublicKey?.data?.publishableKey 
+      ? loadStripe(publicKeyData.getPublicKey.data.publishableKey)
+      : null;
+  
+    if (!stripePromise) {
+      return null;
+    }
+  return (
+    <Elements stripe={stripePromise} options={stripeElementOptions}>
+      <CheckoutStepperContent {...props} />
+    </Elements>
+  );
+};
+
+export default CheckoutStepper;

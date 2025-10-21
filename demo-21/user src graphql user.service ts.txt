@@ -1,0 +1,98 @@
+import apolloClient from '@frontend/apollo-client';
+import { GET_USER, USER_EDIT } from './queries/user.queries';
+
+export interface GetUserResponse {
+  getUser: {
+    status: string;
+    message: string;
+    data: {
+      user: {
+        _id: string;
+        fullName: string;
+        email: string;
+        phoneNumber: string;
+        facilityName: string;
+        facilityType: string | { id?: string; name?: string };
+        state: string;
+        county: string;
+        role: string;
+        status: string;
+        numberOfLicensedBeds: number;
+        serviceLines: string[] | { id?: string; name?: string }[];
+        isActive: boolean;
+        deletedAt: string | null;
+        facilities: any[];
+        createdAt: string;
+        updatedAt: string;
+        __v: number;
+        stripeCustomerId: string;
+        password: string;
+        verifyEmail: boolean;
+        verifyPhoneNumber: boolean;
+        otpCode: string;
+        otpExpires: string;
+        is2FA: boolean;
+      };
+    };
+    error: string | null;
+  };
+}
+
+export interface UserEditInput {
+  userId: string;
+  fullName?: string;
+  email?: string;
+  phoneNumber?: string;
+  facilityName?: string;
+  facilityType?: string;
+  state?: string;
+  county?: string;
+  numberOfLicensedBeds?: number;
+  serviceLines?: string[];
+  is2FA?: boolean;
+}
+
+export interface UserEditResponse {
+  userEdit: {
+    status: string;
+    message: string;
+    data: {
+      userId: string;
+      fullName: string;
+      email: string;
+      phoneNumber: string;
+      facilityName: string;
+      facilityType: string;
+      state: string;
+      county: string;
+      numberOfLicensedBeds: number;
+      serviceLines: string[];
+    };
+  };
+}
+
+export const getUserService = async (): Promise<GetUserResponse> => {
+  try {
+    const { data } = await apolloClient.query<GetUserResponse>({
+      query: GET_USER,
+      fetchPolicy: 'network-only', // Always fetch fresh data
+    });
+    return data;
+  } catch (error) {
+    console.error('Error fetching user data:', error);
+    throw error;
+  }
+};
+
+export const userEditService = async (input: UserEditInput): Promise<UserEditResponse> => {
+  try {
+    const { data } = await apolloClient.mutate<UserEditResponse>({
+      mutation: USER_EDIT,
+      variables: { input },
+    });
+    return data!;
+  } catch (error) {
+    console.error('Error updating user data:', error);
+    throw error;
+  }
+};

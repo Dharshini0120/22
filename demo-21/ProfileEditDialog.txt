@@ -1,0 +1,893 @@
+"use client";
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  Typography,
+  Box,
+  TextField,
+  InputAdornment,
+  MenuItem,
+  Autocomplete,
+  IconButton,
+  CircularProgress,
+  Chip,
+} from "@mui/material";
+import {
+  Person as PersonIcon,
+  Email as EmailIcon,
+  LocalPhone as PhoneIcon,
+  Business as BusinessIcon,
+  Language as LanguageIcon,
+  Apartment as ApartmentIcon,
+  Hotel as HotelIcon,
+  MiscellaneousServices as ServiceIcon,
+  Close as CloseIcon,
+} from "@mui/icons-material";
+import { useQuery } from "@apollo/client";
+import { GET_FACILITY_TYPES } from "../graphql/queries/facility.queries";
+import { userEditService, UserEditInput } from "../graphql/user.service";
+import { useDispatch, useSelector } from "react-redux";
+import { RootState, AppDispatch } from "../store/store";
+import { getUser } from "../store/userSlice";
+import { syncUserData } from "../store/authSlice";
+import {
+  VerifyContactInfoDialog,
+  VerifyEmailDialog,
+  VerifyPhoneDialog,
+  ContactVerifiedDialog,
+} from "@frontend/shared-ui";
+
+/** Props */
+interface ProfileEditDialogProps {
+  open: boolean;
+  onClose: () => void;
+  currentData: {
+    fullName: string;
+    email: string;
+    phoneNumber: string;
+    facilityName: string;
+    facilityType: string; // name or id
+    county: string;
+    state: string;
+    serviceLines: string; // comma separated names
+    numberOfBeds: string;
+  };
+  onUpdate: (data: {
+    fullName: string;
+    email: string;
+    phoneNumber: string;
+    facilityName: string;
+    facilityType: string; // name
+    county: string;
+    state: string;
+    serviceLines: string; // comma separated names
+    numberOfBeds: string;
+  }) => void;
+}
+
+/** Form types */
+interface FormState {
+  fullName: string;
+  email: string;
+  phone: string;
+  facilityName: string;
+  facilityType: string; // id
+  state: string;
+  county: string;
+  beds: string;
+  serviceLine: string[]; // ids
+}
+type FormErrors = Record<string, string>;
+
+const ProfileEditDialog: React.FC<ProfileEditDialogProps> = ({
+  open,
+  onClose,
+  currentData,
+  onUpdate,
+}) => {
+  const dispatch = useDispatch<AppDispatch>();
+  const { userDetail } = useSelector((state: RootState) => state.user);
+
+  const [form, setForm] = useState<FormState>({
+    fullName: "",
+    email: "",
+    phone: "",
+    facilityName: "",
+    facilityType: "",
+    state: "",
+    county: "",
+    beds: "",
+    serviceLine: [],
+  });
+
+  const [errors, setErrors] = useState<FormErrors>({});
+  const [loading, setLoading] = useState(false);
+  const [states, setStates] = useState<string[]>([]);
+  const [counties, setCounties] = useState<string[]>([]);
+  const [stateCountyData, setStateCountyData] = useState<
+    Record<string, string[]>
+  >({});
+
+  // Verification flow state
+  const [showVerifyContact, setShowVerifyContact] = useState(false);
+  const [showVerifyEmail, setShowVerifyEmail] = useState(false);
+  const [showVerifyPhone, setShowVerifyPhone] = useState(false);
+  const [showContactVerified, setShowContactVerified] = useState(false);
+  const [emailVerified, setEmailVerified] = useState(false);
+  const [phoneVerified, setPhoneVerified] = useState(false);
+
+  /** GraphQL: facility types + service lines */
+  const { data: facilityTypesData } = useQuery(GET_FACILITY_TYPES, {
+    fetchPolicy: "cache-first",
+  });
+
+  const facilityTypes: Array<{ id: string; name: string }> = useMemo(() => {
+    const list =
+      (facilityTypesData?.getFacilityTypes?.data ?? [])
+        .map((f: { _id?: string; name?: string }) => ({
+          id: f?._id as string,
+          name: f?.name as string,
+        }))
+        .filter((f) => f.id && f.name) || [];
+    return list.length
+      ? list.sort((a, b) => a.name.localeCompare(b.name))
+      : [];
+  }, [facilityTypesData]);
+
+  const availableServiceLines: Array<{ id: string; name: string }> =
+    useMemo(() => {
+      if (!form.facilityType || !facilityTypesData?.getFacilityTypes?.data)
+        return [];
+      const ft = facilityTypesData.getFacilityTypes.data.find(
+        (x: { _id?: string }) => x._id === form.facilityType
+      );
+      const list =
+        ft?.serviceLineDetails
+          ?.map((s: { _id?: string; name?: string }) => ({
+            id: s?._id as string,
+            name: s?.name as string,
+          }))
+          .filter((s: any) => s.id && s.name) || [];
+      return list.length
+        ? list.sort((a, b) => a.name.localeCompare(b.name))
+        : [];
+    }, [facilityTypesData, form.facilityType]);
+
+  /** Init form when dialog opens */
+  useEffect(() => {
+    if (!open || !currentData) return;
+
+    // Resolve facilityType to ID if a name was provided
+    const facilityTypeId = currentData.facilityType
+      ? facilityTypes.find((ft) => ft.name === currentData.facilityType)?.id ||
+        currentData.facilityType
+      : "";
+
+    setForm((prev) => ({
+      ...prev,
+      fullName: currentData.fullName || "",
+      email: currentData.email || "",
+      phone: currentData.phoneNumber || "",
+      facilityName: currentData.facilityName || "",
+      facilityType: facilityTypeId,
+      state: currentData.state || "",
+      county: currentData.county || "",
+      beds: currentData.numberOfBeds || "",
+      serviceLine: [], // populate later when service lines load
+    }));
+  }, [open, currentData, facilityTypes]);
+
+  /** When service lines load, convert names -> ids for currentData */
+  useEffect(() => {
+    if (
+      open &&
+      currentData?.serviceLines &&
+      availableServiceLines.length > 0
+    ) {
+      const ids = currentData.serviceLines
+        .split(",")
+        .map((n) => n.trim())
+        .map((name) => availableServiceLines.find((sl) => sl.name === name)?.id)
+        .filter(Boolean) as string[];
+
+      setForm((prev) => ({ ...prev, serviceLine: ids }));
+    }
+  }, [open, currentData, availableServiceLines]);
+
+  /** Mock states & counties */
+  useEffect(() => {
+    const mock: Record<string, string[]> = {
+      Alabama: ["Autauga", "Baldwin", "Barbour", "Bibb", "Blount"],
+      Alaska: ["Aleutians East", "Aleutians West", "Anchorage", "Bethel", "Bristol Bay"],
+      Arizona: ["Apache", "Cochise", "Coconino", "Gila", "Graham"],
+      Arkansas: ["Arkansas", "Ashley", "Baxter", "Benton", "Boone"],
+      California: ["Alameda", "Alpine", "Amador", "Butte", "Calaveras"],
+      Colorado: ["Adams", "Alamosa", "Arapahoe", "Archuleta", "Baca"],
+      Connecticut: ["Fairfield", "Hartford", "Litchfield", "Middlesex", "New Haven"],
+      Delaware: ["Kent", "New Castle", "Sussex"],
+      Florida: ["Alachua", "Baker", "Bay", "Bradford", "Brevard"],
+      Georgia: ["Appling", "Atkinson", "Bacon", "Baker", "Baldwin"],
+      Texas: ["Anderson", "Andrews", "Angelina", "Aransas", "Archer"],
+      "New York": ["Albany", "Allegany", "Bronx", "Broome", "Cattaraugus", "Manhattan"],
+    };
+    setStates(Object.keys(mock).sort());
+    setStateCountyData(mock);
+  }, []);
+
+  useEffect(() => {
+    setCounties(form.state ? stateCountyData[form.state] ?? [] : []);
+  }, [form.state, stateCountyData]);
+
+  /** Validation */
+  const validateField = (name: string, value: string | string[]): string => {
+    switch (name) {
+      case "fullName":
+        return !value ? "Full name is required" : "";
+      case "email":
+        return !value
+          ? "Email is required"
+          : !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value as string)
+          ? "Invalid email format"
+          : "";
+      case "phone":
+        return !value ? "Phone number is required" : "";
+      case "facilityName":
+        return !value ? "Facility name is required" : "";
+      case "facilityType":
+        return !value ? "Facility type is required" : "";
+      case "state":
+        return !value ? "State is required" : "";
+      case "county":
+        return !value ? "County is required" : "";
+      case "beds":
+        return !value ? "Number of beds is required" : "";
+      default:
+        return "";
+    }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setForm((p) => ({ ...p, [name]: value }));
+    if (errors[name]) setErrors((p) => ({ ...p, [name]: "" }));
+  };
+
+  const handleSelectChange = (name: keyof FormState, value: string) => {
+    setForm((p) => ({
+      ...p,
+      [name]: value,
+      ...(name === "state" ? { county: "" } : null),
+      ...(name === "facilityType" ? { serviceLine: [] } : null),
+    }));
+  };
+
+  const handleServiceLineChange = (
+    _e: React.SyntheticEvent,
+    newDisplayValues: string[]
+  ) => {
+    // Convert chosen display names -> ids
+    const ids = newDisplayValues
+      .map((label) => availableServiceLines.find((o) => o.name === label)?.id)
+      .filter(Boolean) as string[];
+    setForm((p) => ({ ...p, serviceLine: ids }));
+  };
+
+  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    setErrors((prev) => ({
+      ...prev,
+      [e.target.name]: validateField(e.target.name, e.target.value),
+    }));
+  };
+
+  const validateForm = () => {
+    const next: FormErrors = {};
+    (Object.keys(form) as (keyof FormState)[]).forEach(
+      (k) => (next[k] = validateField(k, form[k]))
+    );
+    setErrors(next);
+    return Object.values(next).every((v) => !v);
+  };
+
+  const isFormValid =
+    !!form.fullName &&
+    !!form.email &&
+    !!form.phone &&
+    !!form.facilityName &&
+    !!form.facilityType &&
+    !!form.state &&
+    !!form.county &&
+    !!form.beds;
+
+  /** Menu props for selects */
+  const menuProps: any = {
+    disableScrollLock: true,
+    disablePortal: true,
+    PaperProps: { sx: { maxHeight: 250 } },
+    anchorOrigin: { vertical: "bottom", horizontal: "left" },
+    transformOrigin: { vertical: "top", horizontal: "left" },
+  };
+
+  /** Update handler */
+  const handleUpdate = async () => {
+    if (!validateForm()) return;
+    
+    // Check if email or phone has changed
+    const emailChanged = form.email !== currentData.email;
+    const phoneChanged = form.phone !== currentData.phoneNumber;
+    
+    if (emailChanged || phoneChanged) {
+      // Show verification dialog
+      setShowVerifyContact(true);
+    } else {
+      // No contact changes, update directly
+      await performUpdate();
+    }
+  };
+
+  const performUpdate = async () => {
+    setLoading(true);
+    try {
+      const payload: UserEditInput = {
+        userId: userDetail._id || "",
+        fullName: form.fullName,
+        email: form.email,
+        phoneNumber: form.phone,
+        facilityName: form.facilityName,
+        facilityType: form.facilityType, // id
+        state: form.state,
+        county: form.county,
+        numberOfLicensedBeds: parseInt(form.beds) || 0,
+        serviceLines: form.serviceLine, // ids
+      };
+
+      await userEditService(payload);
+      await dispatch(getUser());
+      
+      // Sync updated user data to authSlice
+      dispatch(syncUserData({
+        fullName: form.fullName,
+        email: form.email,
+        facilityName: form.facilityName
+      }));
+
+      // Convert ids -> labels for local UI update
+      const serviceLineNames = form.serviceLine
+        .map((id) => availableServiceLines.find((sl) => sl.id === id)?.name)
+        .filter(Boolean)
+        .join(", ");
+      const facilityTypeName =
+        facilityTypes.find((ft) => ft.id === form.facilityType)?.name ||
+        form.facilityType;
+
+      onUpdate({
+        fullName: form.fullName,
+        email: form.email,
+        phoneNumber: form.phone,
+        facilityName: form.facilityName,
+        facilityType: facilityTypeName,
+        state: form.state,
+        county: form.county,
+        serviceLines: serviceLineNames,
+        numberOfBeds: form.beds,
+      });
+      onClose();
+    } catch (err) {
+      console.error("Error updating profile:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Verification flow handlers
+  const handleVerifyEmail = () => {
+    setShowVerifyContact(false);
+    setShowVerifyEmail(true);
+  };
+
+  const handleVerifyPhone = () => {
+    setShowVerifyContact(false);
+    setShowVerifyPhone(true);
+  };
+
+  const handleEmailVerified = (otp: string) => {
+    // Here you would typically verify the OTP with your backend
+    console.log('Email OTP verified:', otp);
+    setEmailVerified(true);
+    setShowVerifyEmail(false);
+    setShowVerifyContact(true);
+  };
+
+  const handlePhoneVerified = (otp: string) => {
+    // Here you would typically verify the OTP with your backend
+    console.log('Phone OTP verified:', otp);
+    setPhoneVerified(true);
+    setShowVerifyPhone(false);
+    setShowVerifyContact(true);
+  };
+
+  const handleResendEmailCode = () => {
+    // Here you would typically call your backend to resend email OTP
+    console.log('Resending email OTP');
+  };
+
+  const handleResendPhoneCode = () => {
+    // Here you would typically call your backend to resend phone OTP
+    console.log('Resending phone OTP');
+  };
+
+  const handleVerificationContinue = async () => {
+    if (emailVerified && phoneVerified) {
+      setShowVerifyContact(false);
+      setShowContactVerified(true);
+    }
+  };
+
+  const handleContactVerifiedContinue = async () => {
+    setShowContactVerified(false);
+    await performUpdate();
+  };
+
+  const handleVerificationBack = () => {
+    setShowVerifyEmail(false);
+    setShowVerifyPhone(false);
+    setShowVerifyContact(true);
+  };
+
+  const handleVerificationClose = () => {
+    setShowVerifyContact(false);
+    setShowVerifyEmail(false);
+    setShowVerifyPhone(false);
+    setShowContactVerified(false);
+    setEmailVerified(false);
+    setPhoneVerified(false);
+  };
+
+  /** Reusable renderer */
+  const renderField = (
+    name: keyof FormState,
+    label: string,
+    placeholder: string,
+    icon: React.ReactNode,
+    options?: Array<{ value: string; label: string }> | string[],
+    isMultiSelect?: boolean
+  ) => {
+    const value = form[name];
+    const error = errors[name as string];
+
+    /** Service line Autocomplete with CHIPS */
+    if (name === "serviceLine") {
+      // derive display labels from ids
+      const selectedLabels = form.serviceLine
+        .map((id) => availableServiceLines.find((o) => o.id === id)?.name)
+        .filter(Boolean) as string[];
+
+      const optionLabels = availableServiceLines.map((o) => o.name);
+      const hasNoServiceLines =
+        !!form.facilityType && optionLabels.length === 0;
+      const disabled = !form.facilityType || hasNoServiceLines;
+
+      return (
+        <Autocomplete
+          multiple
+          options={optionLabels}
+          value={selectedLabels}
+          onChange={handleServiceLineChange}
+          noOptionsText={
+            !form.facilityType
+              ? "Please select a facility type first"
+              : "No service lines found for this facility type"
+          }
+          disabled={disabled}
+          renderTags={(vals, getTagProps) =>
+            vals.map((label, idx) => {
+              const { key, ...tagProps } = getTagProps({ index: idx });
+              return <Chip key={key} label={label} size="small" {...tagProps} />;
+            })
+          }
+          isOptionEqualToValue={(opt, val) => opt === val}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label={label}
+              placeholder={
+                !form.facilityType
+                  ? "Please select a facility type first"
+                  : hasNoServiceLines
+                  ? "No service lines available"
+                  : "Type to add new service line"
+              }
+              error={!!error}
+              helperText={error}
+              InputLabelProps={{
+                shrink: true,
+                sx: {
+                  fontSize: "0.95rem",
+                  color: "#9ca3af",
+                  "&.Mui-focused": { color: "#9ca3af" },
+                  transform: "translate(14px, 16px) scale(1)",
+                  "&.MuiInputLabel-shrink": {
+                    transform: "translate(14px, -8px) scale(0.85)",
+                    backgroundColor: "#fff",
+                    px: 0.5,
+                  },
+                },
+              }}
+              InputProps={{
+                ...params.InputProps,
+                startAdornment: (
+                  <InputAdornment position="start" sx={{ pr: 0 }}>
+                    {icon}
+                    <Box sx={{ height: 28, width: 2, bgcolor: "#b0b0b0", ml: 1 }} />
+                    {params.InputProps.startAdornment}
+                  </InputAdornment>
+                ),
+              }}
+              sx={{
+                "& .MuiOutlinedInput-root": {
+                  borderRadius: "12px",
+                  backgroundColor: "#fff",
+                  fontSize: "1rem",
+                  minHeight: "56px",
+                  "& fieldset": { borderColor: error ? "#d32f2f" : "#a8a8a8" },
+                  "&:hover fieldset": {
+                    borderColor: error ? "#d32f2f" : "#808080",
+                  },
+                  "&.Mui-focused fieldset": {
+                    borderColor: error ? "#d32f2f" : "#4285F4",
+                  },
+                },
+                "& .MuiOutlinedInput-input": { padding: "14px 10px" },
+              }}
+            />
+          )}
+        />
+      );
+    }
+
+    /** Selects */
+    if (options) {
+      return (
+        <TextField
+          select
+          name={name}
+          value={value as string}
+          label={label}
+          placeholder={placeholder}
+          fullWidth
+          error={!!error}
+          helperText={error}
+          onChange={(e) => handleSelectChange(name, e.target.value)}
+          onBlur={handleBlur}
+          SelectProps={{ MenuProps: menuProps }}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start" sx={{ pr: 0.5 }}>
+                {icon}
+                <Box sx={{ height: 28, width: 1.3, bgcolor: "#b0b0b0", ml: 1 }} />
+              </InputAdornment>
+            ),
+          }}
+          InputLabelProps={{
+            shrink: true,
+            sx: {
+              fontSize: "0.95rem",
+              color: "#9ca3af",
+              "&.Mui-focused": { color: "#9ca3af" },
+              transform: "translate(14px, 16px) scale(1)",
+              "&.MuiInputLabel-shrink": {
+                transform: "translate(14px, -8px) scale(0.85)",
+                backgroundColor: "#fff",
+                px: 0.5,
+              },
+            },
+          }}
+          sx={{
+            "& .MuiOutlinedInput-root": {
+              borderRadius: "12px",
+              backgroundColor: "#fff",
+              fontSize: "1rem",
+              minHeight: "56px",
+              "& fieldset": { borderColor: error ? "#d32f2f" : "#a8a8a8" },
+              "&:hover fieldset": {
+                borderColor: error ? "#d32f2f" : "#808080",
+              },
+              "&.Mui-focused fieldset": {
+                borderColor: error ? "#d32f2f" : "#4285F4",
+              },
+            },
+            "& .MuiOutlinedInput-input": { padding: "14px 10px" },
+          }}
+        >
+          {options.map((opt, idx) => {
+            const key =
+              typeof opt === "object"
+                ? (opt as any).value
+                : (opt as string) || `opt-${idx}`;
+            const val = typeof opt === "object" ? (opt as any).value : opt;
+            const lbl = typeof opt === "object" ? (opt as any).label : opt;
+            return (
+              <MenuItem key={key} value={val as string}>
+                {lbl as string}
+              </MenuItem>
+            );
+          })}
+        </TextField>
+      );
+    }
+
+    /** Text inputs */
+    return (
+      <TextField
+        name={name}
+        value={value as string}
+        label={label}
+        placeholder={placeholder}
+        fullWidth
+        error={!!error}
+        helperText={error}
+        onChange={handleInputChange}
+        onBlur={handleBlur}
+        InputProps={{
+          startAdornment: (
+            <InputAdornment position="start" sx={{ pr: 0.5 }}>
+              {icon}
+              <Box sx={{ height: 28, width: 1.3, bgcolor: "#b0b0b0", ml: 1 }} />
+            </InputAdornment>
+          ),
+        }}
+        InputLabelProps={{
+          shrink: true,
+          sx: {
+            fontSize: "0.95rem",
+            color: "#9ca3af",
+            "&.Mui-focused": { color: "#9ca3af" },
+            transform: "translate(14px, 16px) scale(1)",
+            "&.MuiInputLabel-shrink": {
+              transform: "translate(14px, -8px) scale(0.85)",
+              backgroundColor: "#fff",
+              px: 0.5,
+            },
+          },
+        }}
+        sx={{
+          "& .MuiOutlinedInput-root": {
+            borderRadius: "12px",
+            backgroundColor: "#fff",
+            fontSize: "1rem",
+            minHeight: "56px",
+            "& fieldset": { borderColor: error ? "#d32f2f" : "#a8a8a8" },
+            "&:hover fieldset": { borderColor: error ? "#d32f2f" : "#808080" },
+            "&.Mui-focused fieldset": {
+              borderColor: error ? "#d32f2f" : "#4285F4",
+            },
+          },
+          "& .MuiOutlinedInput-input": { padding: "14px 10px" },
+        }}
+      />
+    );
+  };
+
+  return (
+    <>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="md"
+      fullWidth
+      PaperProps={{ sx: { borderRadius: "16px", maxHeight: "90vh" } }}
+    >
+      <DialogTitle
+        sx={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          pb: 1,
+          borderBottom: "1px solid #e4e5e7",
+          fontWeight: 600,
+          fontFamily: "var(--font-inter), sans-serif",
+          color: "#1a1a1a",
+          fontSize: "1.5rem",
+        }}
+      >
+        Edit Profile
+        <IconButton onClick={onClose} sx={{ color: "#6b7280" }}>
+          <CloseIcon />
+        </IconButton>
+      </DialogTitle>
+
+      <DialogContent sx={{ p: 3 }}>
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
+          {/* Personal */}
+          <Typography
+            variant="h6"
+            fontWeight={600}
+            fontFamily={"var(--font-inter), sans-serif"}
+            sx={{ color: "#1a1a1a", mb: 1 }}
+          >
+            Personal Information
+          </Typography>
+
+          <Box display="flex" flexDirection={{ xs: "column", md: "row" }} gap={2}>
+            {renderField(
+              "fullName",
+              "Full Name",
+              "Enter your full name",
+              <PersonIcon fontSize="small" style={{ opacity: 0.7 }} />
+            )}
+            {renderField(
+              "email",
+              "Email Address",
+              "Enter your email",
+              <EmailIcon fontSize="small" style={{ opacity: 0.7 }} />
+            )}
+          </Box>
+
+          <Box display="flex" flexDirection={{ xs: "column", md: "row" }} gap={2}>
+            {renderField(
+              "phone",
+              "Phone Number",
+              "Enter your phone number",
+              <PhoneIcon fontSize="small" style={{ opacity: 0.7 }} />
+            )}
+            {renderField(
+              "facilityName",
+              "Facility Name",
+              "Enter facility name",
+              <BusinessIcon fontSize="small" style={{ opacity: 0.7 }} />
+            )}
+          </Box>
+
+          {/* Facility */}
+          <Typography
+            variant="h6"
+            fontWeight={600}
+            fontFamily={"var(--font-inter), sans-serif"}
+            sx={{ color: "#1a1a1a", mb: 1, mt: 2 }}
+          >
+            Facility Information
+          </Typography>
+
+          <Box display="flex" flexDirection={{ xs: "column", md: "row" }} gap={2}>
+            {renderField(
+              "facilityType",
+              "Facility Type",
+              "Select Facility Type",
+              <ApartmentIcon fontSize="small" style={{ opacity: 0.7 }} />,
+              facilityTypes.map((ft) => ({ value: ft.id, label: ft.name }))
+            )}
+            {renderField(
+              "state",
+              "State",
+              "Select State",
+              <LanguageIcon fontSize="small" style={{ opacity: 0.7 }} />,
+              states
+            )}
+          </Box>
+
+          <Box display="flex" flexDirection={{ xs: "column", md: "row" }} gap={2}>
+            {renderField(
+              "county",
+              "County",
+              "Select County",
+              <LanguageIcon fontSize="small" style={{ opacity: 0.7 }} />,
+              counties
+            )}
+            {renderField(
+              "beds",
+              "Number of Licensed Beds",
+              "Enter number of beds",
+              <HotelIcon fontSize="small" style={{ opacity: 0.7 }} />
+            )}
+          </Box>
+
+          {renderField(
+            "serviceLine",
+            "What service lines exist at your Facility",
+            "Choose Facility Service Line",
+            <ServiceIcon fontSize="small" style={{ opacity: 0.7 }} />,
+            availableServiceLines.map((sl) => ({ value: sl.id, label: sl.name })),
+            true
+          )}
+        </Box>
+      </DialogContent>
+
+      <DialogActions sx={{ p: 3, pt: 1, borderTop: "1px solid #e4e5e7" }}>
+        <Button
+          onClick={onClose}
+          variant="outlined"
+          sx={{
+            textTransform: "none",
+            letterSpacing: "0.5px",
+            fontWeight: 500,
+            fontFamily: "var(--font-inter), sans-serif",
+            borderRadius: "8px",
+            padding: "10px 24px",
+            borderColor: "#d1d5db",
+            color: "#6b7280",
+            "&:hover": { borderColor: "#9ca3af", backgroundColor: "#f9fafb" },
+          }}
+        >
+          Cancel
+        </Button>
+        <Button
+          onClick={handleUpdate}
+          variant="contained"
+          disabled={!isFormValid || loading}
+          sx={{
+            background: "linear-gradient(90deg, #408bff 0%, #3a7de6 100%)",
+            textTransform: "none",
+            letterSpacing: "0.5px",
+            fontWeight: 500,
+            fontFamily: "var(--font-inter), sans-serif",
+            borderRadius: "8px",
+            padding: "10px 24px",
+            boxShadow: "0 2px 8px rgba(64,139,255,.3)",
+            "&:hover": {
+              background: "linear-gradient(90deg, #3a7de6 0%, #2968d4 100%)",
+              boxShadow: "0 4px 12px rgba(64,139,255,.4)",
+            },
+            "&:disabled": {
+              background: "#e5e7eb",
+              color: "#9ca3af",
+              boxShadow: "none",
+            },
+          }}
+        >
+          {loading ? (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <CircularProgress size={16} color="inherit" />
+              Updating...
+            </Box>
+          ) : (
+            "Update Profile"
+          )}
+        </Button>
+      </DialogActions>
+    </Dialog>
+      {/* Verification Flow Dialogs */}
+      <VerifyContactInfoDialog
+        open={showVerifyContact}
+        onClose={handleVerificationClose}
+        email={form.email}
+        phoneNumber={form.phone}
+        emailVerified={emailVerified}
+        phoneVerified={phoneVerified}
+        onVerifyEmail={handleVerifyEmail}
+        onVerifyPhone={handleVerifyPhone}
+        onContinue={handleVerificationContinue}
+      />
+
+      <VerifyEmailDialog
+        open={showVerifyEmail}
+        onClose={handleVerificationClose}
+        email={form.email}
+        onVerify={handleEmailVerified}
+        onBack={handleVerificationBack}
+        onResendCode={handleResendEmailCode}
+      />
+
+      <VerifyPhoneDialog
+        open={showVerifyPhone}
+        onClose={handleVerificationClose}
+        phoneNumber={form.phone}
+        onVerify={handlePhoneVerified}
+        onBack={handleVerificationBack}
+        onResendCode={handleResendPhoneCode}
+      />
+
+      <ContactVerifiedDialog
+        open={showContactVerified}
+        onClose={handleVerificationClose}
+        email={form.email}
+        phoneNumber={form.phone}
+        onContinue={handleContactVerifiedContinue}
+      />
+    </>
+  );
+};
+
+export default ProfileEditDialog;

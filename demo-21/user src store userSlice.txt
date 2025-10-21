@@ -1,0 +1,116 @@
+import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
+import { getUserService } from '../graphql/user.service';
+
+export interface UserDetail {
+  full_name?: string;
+  user_name?: string;
+  email?: string;
+  role?: { name?: string; };
+  organization?: { name?: string; id?: string; };
+  country?: string;
+  isAuthenticated?: boolean;
+  user_profile_img_path?: string;
+  // Additional fields from the API response
+  _id?: string;
+  fullName?: string;
+  phoneNumber?: string;
+  facilityName?: string;
+  facilityType?: string | { id?: string; name?: string };
+  state?: string;
+  county?: string;
+  status?: string;
+  numberOfLicensedBeds?: number;
+  serviceLines?: string[] | { id?: string; name?: string }[];
+  isActive?: boolean;
+  deletedAt?: string | null;
+  facilities?: unknown[];
+  createdAt?: string;
+  updatedAt?: string;
+  __v?: number;
+  stripeCustomerId?: string;
+  is2FA?: boolean;
+  verifyEmail?: boolean;
+  verifyPhoneNumber?: boolean;
+  otpCode?: string;
+  otpExpires?: string;
+
+}
+
+export interface UserState {
+  userDetail: UserDetail;
+  loading: boolean;
+  error: string | null;
+}
+
+const initialState: UserState = {
+  userDetail: {
+    isAuthenticated: false,
+  },
+  loading: false,
+  error: null,
+};
+
+// Async thunk for fetching user data
+export const getUser = createAsyncThunk(
+  'user/getUser',
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await getUserService();
+      if (response.getUser.status === 'success') {
+        return response.getUser.data.user;
+      } else {
+        return rejectWithValue(response.getUser.message || 'Failed to fetch user data');
+      }
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Network error';
+      return rejectWithValue(errorMessage);
+    }
+  }
+);
+
+const userSlice = createSlice({
+  name: 'user',
+  initialState,
+  reducers: {
+    userResponse: (state, action: PayloadAction<UserDetail>) => {
+      state.userDetail = { ...action.payload, isAuthenticated: true };
+      state.error = null;
+    },
+    clearUserState: (state) => {
+      state.userDetail = { isAuthenticated: false };
+      state.loading = false;
+      state.error = null;
+    },
+    setUserLoading: (state, action: PayloadAction<boolean>) => {
+      state.loading = action.payload;
+    },
+    setUserError: (state, action: PayloadAction<string | null>) => {
+      state.error = action.payload;
+      state.loading = false;
+    },
+  },
+  extraReducers: (builder) => {
+    builder
+      .addCase(getUser.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(getUser.fulfilled, (state, action) => {
+        state.loading = false;
+        state.userDetail = { 
+          ...action.payload, 
+          isAuthenticated: true,
+          role: { name: action.payload.role }
+        };
+        state.error = null;
+      })
+      .addCase(getUser.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload as string;
+        state.userDetail = { isAuthenticated: false };
+      });
+  },
+});
+
+export const { userResponse, clearUserState, setUserLoading, setUserError } = userSlice.actions;
+export default userSlice.reducer;

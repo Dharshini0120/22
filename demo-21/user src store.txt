@@ -1,0 +1,64 @@
+import { configureStore } from '@reduxjs/toolkit';
+import { persistStore, persistReducer } from 'redux-persist';
+import storage from 'redux-persist/lib/storage';
+import { errorMiddleware } from './errorMiddleware';
+import authReducer from './authSlice';
+import roleReducer from './roleSlice';
+import assessmentReducer from './assessmentSlice';
+import userReducer from './userSlice';
+import passwordReducer from './passwordSlice';
+
+// Persist configuration for assessment slice
+const assessmentPersistConfig = {
+  key: 'assessment',
+  storage,
+  whitelist: ['paymentMetadata'], // Only persist paymentMetadata
+};
+
+// Persist configuration for auth slice
+const authPersistConfig = {
+  key: 'auth',
+  storage,
+  whitelist: ['user', 'token', 'isAuthenticated'], // Persist user data
+};
+
+// Persist configuration for role slice
+const rolePersistConfig = {
+  key: 'role',
+  storage,
+  whitelist: ['roleData'], // Persist role data
+};
+
+// Persist configuration for user slice
+const userPersistConfig = {
+  key: 'user',
+  storage,
+  whitelist: ['userDetail'], // Persist user data
+};
+
+// Persist configuration for password slice
+const passwordPersistConfig = {
+  key: 'password',
+  storage,
+  whitelist: ['lastPasswordChanged'], // Persist last password changed date
+};
+
+export const store = configureStore({
+  reducer: {
+    auth: persistReducer(authPersistConfig, authReducer),
+    role: persistReducer(rolePersistConfig, roleReducer),
+    assessment: persistReducer(assessmentPersistConfig, assessmentReducer),
+    user: persistReducer(userPersistConfig, userReducer),
+    password: persistReducer(passwordPersistConfig, passwordReducer),
+  },
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware({
+      serializableCheck: {
+        ignoredActions: ['persist/PERSIST', 'persist/REHYDRATE'],
+      },
+    }).concat(errorMiddleware),
+});
+
+export const persistor = persistStore(store);
+export type RootState = ReturnType<typeof store.getState>;
+export type AppDispatch = typeof store.dispatch;

@@ -1,0 +1,313 @@
+'use client';
+
+import React from 'react';
+import { useSelector } from 'react-redux';
+import { Button, IconButton, Fab, Tooltip } from '@mui/material';
+import { 
+  hasCreatePermission,
+  hasUpdatePermission,
+  hasDeletePermission,
+  hasViewPermission,
+  RoleData
+} from '@frontend/shared-utils';
+
+interface RootState {
+  role: {
+    roleData: RoleData | null;
+    loading: boolean;
+    error: string | null;
+  };
+}
+
+interface PermissionBasedButtonProps {
+  moduleSlug: string;
+  action: 'create' | 'update' | 'delete' | 'view';
+  children: React.ReactNode;
+  fallback?: React.ReactNode;
+  variant?: 'text' | 'outlined' | 'contained';
+  color?: 'inherit' | 'primary' | 'secondary' | 'success' | 'error' | 'info' | 'warning';
+  size?: 'small' | 'medium' | 'large';
+  disabled?: boolean;
+  onClick?: () => void;
+  className?: string;
+  startIcon?: React.ReactNode;
+  endIcon?: React.ReactNode;
+  fullWidth?: boolean;
+  tooltip?: string;
+}
+
+interface PermissionBasedIconButtonProps {
+  moduleSlug: string;
+  action: 'create' | 'update' | 'delete' | 'view';
+  children: React.ReactNode;
+  fallback?: React.ReactNode;
+  color?: 'inherit' | 'default' | 'primary' | 'secondary' | 'error' | 'info' | 'success' | 'warning';
+  size?: 'small' | 'medium' | 'large';
+  disabled?: boolean;
+  onClick?: () => void;
+  className?: string;
+  tooltip?: string;
+}
+
+interface PermissionBasedFabProps {
+  moduleSlug: string;
+  action: 'create' | 'update' | 'delete' | 'view';
+  children: React.ReactNode;
+  fallback?: React.ReactNode;
+  color?: 'default' | 'primary' | 'secondary' | 'inherit';
+  size?: 'small' | 'medium' | 'large';
+  variant?: 'circular' | 'extended';
+  disabled?: boolean;
+  onClick?: () => void;
+  className?: string;
+  tooltip?: string;
+}
+
+/**
+ * Permission-based Button Component
+ * Shows/hides based on user permissions for specific actions
+ */
+export const PermissionBasedButton: React.FC<PermissionBasedButtonProps> = ({
+  moduleSlug,
+  action,
+  children,
+  fallback = null,
+  variant = 'contained',
+  color = 'primary',
+  size = 'medium',
+  disabled = false,
+  onClick,
+  className,
+  startIcon,
+  endIcon,
+  fullWidth = false,
+  tooltip,
+  ...props
+}) => {
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+
+  const hasAccess = React.useMemo(() => {
+    if (!roleData) return false;
+
+    switch (action) {
+      case 'create':
+        return hasCreatePermission(roleData, moduleSlug);
+      case 'update':
+        return hasUpdatePermission(roleData, moduleSlug);
+      case 'delete':
+        return hasDeletePermission(roleData, moduleSlug);
+      case 'view':
+        return hasViewPermission(roleData, moduleSlug);
+      default:
+        return false;
+    }
+  }, [roleData, moduleSlug, action]);
+
+  if (!hasAccess) {
+    return fallback as React.ReactElement;
+  }
+
+  const button = (
+    <Button
+      variant={variant}
+      color={color}
+      size={size}
+      disabled={disabled}
+      onClick={onClick}
+      className={className}
+      startIcon={startIcon}
+      endIcon={endIcon}
+      fullWidth={fullWidth}
+      {...props}
+    >
+      {children}
+    </Button>
+  );
+
+  if (tooltip) {
+    return <Tooltip title={tooltip}>{button}</Tooltip>;
+  }
+
+  return button;
+};
+
+/**
+ * Permission-based Icon Button Component
+ */
+export const PermissionBasedIconButton: React.FC<PermissionBasedIconButtonProps> = ({
+  moduleSlug,
+  action,
+  children,
+  fallback = null,
+  color = 'default',
+  size = 'medium',
+  disabled = false,
+  onClick,
+  className,
+  tooltip,
+  ...props
+}) => {
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+
+  const hasAccess = React.useMemo(() => {
+    if (!roleData) return false;
+
+    switch (action) {
+      case 'create':
+        return hasCreatePermission(roleData, moduleSlug);
+      case 'update':
+        return hasUpdatePermission(roleData, moduleSlug);
+      case 'delete':
+        return hasDeletePermission(roleData, moduleSlug);
+      case 'view':
+        return hasViewPermission(roleData, moduleSlug);
+      default:
+        return false;
+    }
+  }, [roleData, moduleSlug, action]);
+
+  if (!hasAccess) {
+    return fallback as React.ReactElement;
+  }
+
+  const iconButton = (
+    <IconButton
+      color={color}
+      size={size}
+      disabled={disabled}
+      onClick={onClick}
+      className={className}
+      {...props}
+    >
+      {children}
+    </IconButton>
+  );
+
+  if (tooltip) {
+    return <Tooltip title={tooltip}>{iconButton}</Tooltip>;
+  }
+
+  return iconButton;
+};
+
+/**
+ * Permission-based Floating Action Button Component
+ */
+export const PermissionBasedFab: React.FC<PermissionBasedFabProps> = ({
+  moduleSlug,
+  action,
+  children,
+  fallback = null,
+  color = 'primary',
+  size = 'large',
+  variant = 'circular',
+  disabled = false,
+  onClick,
+  className,
+  tooltip,
+  ...props
+}) => {
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+
+  const hasAccess = React.useMemo(() => {
+    if (!roleData) return false;
+
+    switch (action) {
+      case 'create':
+        return hasCreatePermission(roleData, moduleSlug);
+      case 'update':
+        return hasUpdatePermission(roleData, moduleSlug);
+      case 'delete':
+        return hasDeletePermission(roleData, moduleSlug);
+      case 'view':
+        return hasViewPermission(roleData, moduleSlug);
+      default:
+        return false;
+    }
+  }, [roleData, moduleSlug, action]);
+
+  if (!hasAccess) {
+    return fallback as React.ReactElement;
+  }
+
+  const fab = (
+    <Fab
+      color={color}
+      size={size}
+      variant={variant}
+      disabled={disabled}
+      onClick={onClick}
+      className={className}
+      {...props}
+    >
+      {children}
+    </Fab>
+  );
+
+  if (tooltip) {
+    return <Tooltip title={tooltip}>{fab}</Tooltip>;
+  }
+
+  return fab;
+};
+
+/**
+ * Generic Permission-based Wrapper Component
+ * Can wrap any component and show/hide based on permissions
+ */
+export const PermissionWrapper: React.FC<{
+  moduleSlug: string;
+  action: 'create' | 'update' | 'delete' | 'view';
+  children: React.ReactNode;
+  fallback?: React.ReactNode;
+}> = ({ moduleSlug, action, children, fallback = null }) => {
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+
+  const hasAccess = React.useMemo(() => {
+    if (!roleData) return false;
+
+    switch (action) {
+      case 'create':
+        return hasCreatePermission(roleData, moduleSlug);
+      case 'update':
+        return hasUpdatePermission(roleData, moduleSlug);
+      case 'delete':
+        return hasDeletePermission(roleData, moduleSlug);
+      case 'view':
+        return hasViewPermission(roleData, moduleSlug);
+      default:
+        return false;
+    }
+  }, [roleData, moduleSlug, action]);
+
+  if (!hasAccess) {
+    return fallback as React.ReactElement;
+  }
+
+  return <>{children}</>;
+};
+
+/**
+ * Hook for checking multiple permissions at once
+ */
+export const useMultiplePermissions = (moduleSlug: string) => {
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+
+  return React.useMemo(() => {
+    if (!roleData) {
+      return {
+        canView: false,
+        canCreate: false,
+        canUpdate: false,
+        canDelete: false,
+      };
+    }
+
+    return {
+      canView: hasViewPermission(roleData, moduleSlug),
+      canCreate: hasCreatePermission(roleData, moduleSlug),
+      canUpdate: hasUpdatePermission(roleData, moduleSlug),
+      canDelete: hasDeletePermission(roleData, moduleSlug),
+    };
+  }, [roleData, moduleSlug]);
+};

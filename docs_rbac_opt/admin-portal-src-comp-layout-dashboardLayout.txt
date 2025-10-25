@@ -1,0 +1,158 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+"use client"
+import React, { useEffect, useState, useMemo } from "react";
+import { useSelector } from 'react-redux';
+import { SharedDashboardHeader } from "@frontend/shared-ui";
+import { SharedDashboardDrawer } from "@frontend/shared-ui";
+import { Box, Toolbar } from "@mui/material";
+import DashboardIcon from '@mui/icons-material/Dashboard';
+import SettingsIcon from '@mui/icons-material/Settings';
+import { HelpOutline } from "@mui/icons-material";
+import ViewListIcon from '@mui/icons-material/ViewList';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import SupervisorAccountIcon from '@mui/icons-material/SupervisorAccount';
+import Person2Icon from '@mui/icons-material/Person2';
+import TableViewIcon from '@mui/icons-material/TableView';
+import AttachMoneyOutlinedIcon from '@mui/icons-material/AttachMoneyOutlined';
+
+import { User2Icon } from 'lucide-react';
+import { RootState } from '../../store/store';
+import { hasViewPermission, MODULE_SLUGS } from '@frontend/shared-utils';
+import { useCrossTabSync } from '../../hooks/useCrossTabSync';
+
+// Define all possible navigation items with their corresponding module slugs
+const allNavigationItems = {
+  dashboard: {
+    text: 'Dashboard',
+    icon: <DashboardIcon />,
+    path: '/dashboard',
+    moduleSlug: MODULE_SLUGS.DASHBOARD
+  },
+  adminUsers: {
+    text: 'Admin Management',
+    icon: <Person2Icon />,
+    path: '/admin-users',
+    matchPaths: ['/admin-users', '/admin-users/form'],
+    moduleSlug: MODULE_SLUGS.ADMIN_MANAGEMENT
+  },
+  hospitalUsers: {
+    text: 'User Management',
+    icon: <Person2Icon />,
+    path: '/hospital-users',
+    matchPaths: ['/hospital-users', '/hospital-users/view'],
+    moduleSlug: MODULE_SLUGS.USER_MANAGEMENT
+  },
+  templates: {
+    text: 'Templates',
+    icon: <AccountTreeIcon />,
+    path: '/templates',
+    moduleSlug: MODULE_SLUGS.TEMPLATES
+  },
+  facilityService: {
+    text: 'Facility and Service',
+    icon: <TableViewIcon />,
+    path: '/facility-service',
+    moduleSlug: MODULE_SLUGS.FACILITY_AND_SERVICE
+  },
+  transaction: {
+    text: 'Transactions',
+    icon: <AttachMoneyOutlinedIcon />,
+    path: '/transactions',
+    moduleSlug: MODULE_SLUGS.TRANSACTIONS
+  },
+  assessment: {
+    text: 'Assessment Records',
+    icon: <ViewListIcon />,
+    path: '/assessment',
+    moduleSlug: MODULE_SLUGS.ASSESSMENT_RECORDS
+  },
+  roleAccess: {
+    text: 'Roles & Access',
+    icon: <SupervisorAccountIcon />,
+    path: '/role-access',
+    moduleSlug: MODULE_SLUGS.ROLES_AND_PERMISSIONS
+  },
+  settings: {
+    text: 'Settings',
+    icon: <SettingsIcon />,
+    path: '/setting',
+    moduleSlug: MODULE_SLUGS.SETTINGS
+  },
+  help: {
+    text: 'Help',
+    icon: <HelpOutline />,
+    path: '/help',
+    moduleSlug: MODULE_SLUGS.AUDIT_LOGS
+  },
+};
+
+// Permission-based navigation filtering
+const getNavigationItemsByPermissions = (roleData: any) => {
+  if (!roleData) {
+    console.log('🔍 Navigation: No role data, returning empty array');
+    return [];
+  }
+
+  // Get all navigation items and filter based on view permissions
+  const allItems = Object.values(allNavigationItems);
+
+  const filteredItems = allItems.filter(item => {
+    const hasPermission = hasViewPermission(roleData, item.moduleSlug);
+    console.log(`🔍 Navigation: ${item.text} (${item.moduleSlug}) - Permission: ${hasPermission}`);
+    return hasPermission;
+  });
+
+  console.log('🔍 Navigation: Filtered items count:', filteredItems.length);
+  return filteredItems;
+};
+
+const DashboardLayout = ({ children }) => {
+  const [drawerOpen, setDrawerOpen] = useState(true);
+
+  // Get role data from Redux store
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+  const roleLoading = useSelector((state: RootState) => state.role.loading);
+
+  // Initialize cross-tab synchronization
+  const { refreshingRole } = useCrossTabSync();
+
+  console.log('🔍 DashboardLayout - Role data:', { roleData });
+
+  // Memoize navigation items based on permissions to prevent re-computation
+  const navigationItems = useMemo(() => {
+    console.log('🔄 DashboardLayout - Recomputing navigation items...');
+    const items = getNavigationItemsByPermissions(roleData);
+    console.log('🔄 DashboardLayout - Navigation items computed:', items.map(item => item.text));
+    return items;
+  }, [roleData]);
+
+  // Show loading state while role data is being fetched
+  if (roleLoading || refreshingRole) {
+    return (
+      <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh" }}>
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-500"></div>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ display: "flex" }}>
+      <SharedDashboardHeader open={drawerOpen} onToggle={setDrawerOpen} />
+      <SharedDashboardDrawer navigationItems={navigationItems} open={drawerOpen} onToggle={setDrawerOpen} />
+      <Box
+        component="main"
+        sx={{
+          flexGrow: 1,
+          p: 0,
+          backgroundColor: "#f9fbfc",
+          minHeight: "100vh",
+        }}
+      >
+        <Toolbar />
+        <Box sx={{ padding: 4 }}>{children}</Box>
+      </Box>
+    </Box>
+  );
+};
+ 
+export default DashboardLayout;

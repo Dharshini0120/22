@@ -1,0 +1,233 @@
+'use client';
+
+import React, { useEffect } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
+import { useSelector } from 'react-redux';
+import { 
+  canAccessRoute, 
+  getUnauthorizedRedirectPath,
+  hasViewPermission,
+  MODULE_SLUGS,
+  PermissionType,
+  RoleData
+} from '@frontend/shared-utils';
+
+interface PermissionGuardProps {
+  children: React.ReactNode;
+  moduleSlug?: string;
+  permissionType?: PermissionType;
+  fallback?: React.ReactNode;
+  redirectOnUnauthorized?: boolean;
+  customRedirectPath?: string;
+}
+
+interface RootState {
+  role: {
+    roleData: RoleData | null;
+    loading: boolean;
+    error: string | null;
+  };
+}
+
+/**
+ * PermissionGuard Component
+ * 
+ * This component protects routes and UI elements based on user permissions.
+ * It can either redirect unauthorized users or render a fallback component.
+ */
+export const PermissionGuard: React.FC<PermissionGuardProps> = ({
+  children,
+  moduleSlug,
+  permissionType = 'view',
+  fallback = null,
+  redirectOnUnauthorized = true,
+  customRedirectPath
+}) => {
+  const router = useRouter();
+  const pathname = usePathname();
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+  const roleLoading = useSelector((state: RootState) => state.role.loading);
+
+  useEffect(() => {
+    // Don't check permissions while role data is loading
+    if (roleLoading) {
+      return;
+    }
+
+    // If no role data and not loading, redirect to login or dashboard
+    if (!roleData) {
+      if (redirectOnUnauthorized) {
+        router.push('/auth/signin');
+      }
+      return;
+    }
+
+    let hasAccess = false;
+
+    if (moduleSlug) {
+      // Check specific module permission
+      if (permissionType === 'view') {
+        hasAccess = hasViewPermission(roleData, moduleSlug);
+      } else {
+        // For other permission types, you can extend this
+        hasAccess = hasViewPermission(roleData, moduleSlug);
+      }
+    } else {
+      // Check route-based permission
+      hasAccess = canAccessRoute(roleData, pathname);
+    }
+
+    if (!hasAccess && redirectOnUnauthorized) {
+      const redirectPath = customRedirectPath || getUnauthorizedRedirectPath();
+      console.log(`🚫 Access denied to ${pathname}, redirecting to ${redirectPath}`);
+      router.push(redirectPath);
+    }
+  }, [roleData, roleLoading, pathname, moduleSlug, permissionType, redirectOnUnauthorized, customRedirectPath, router]);
+
+  // Show loading state while role data is being fetched
+  if (roleLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+
+  // If no role data, don't render children
+  if (!roleData) {
+    return fallback as React.ReactElement;
+  }
+
+  let hasAccess = false;
+
+  if (moduleSlug) {
+    // Check specific module permission
+    if (permissionType === 'view') {
+      hasAccess = hasViewPermission(roleData, moduleSlug);
+    } else {
+      // For other permission types, you can extend this
+      hasAccess = hasViewPermission(roleData, moduleSlug);
+    }
+  } else {
+    // Check route-based permission
+    hasAccess = canAccessRoute(roleData, pathname);
+  }
+
+  if (!hasAccess) {
+    return fallback as React.ReactElement;
+  }
+
+  return <>{children}</>;
+};
+
+/**
+ * Higher-Order Component for permission-based rendering
+ */
+export const withPermissionGuard = <P extends object>(
+  Component: React.ComponentType<P>,
+  guardProps: Omit<PermissionGuardProps, 'children'>
+) => {
+  const WrappedComponent = (props: P) => (
+    <PermissionGuard {...guardProps}>
+      <Component {...props} />
+    </PermissionGuard>
+  );
+
+  WrappedComponent.displayName = `withPermissionGuard(${Component.displayName || Component.name})`;
+  return WrappedComponent;
+};
+
+/**
+ * Hook for checking permissions in components
+ */
+export const usePermissionCheck = (moduleSlug?: string, permissionType: PermissionType = 'view') => {
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+  const roleLoading = useSelector((state: RootState) => state.role.loading);
+  const pathname = usePathname();
+
+  const hasAccess = React.useMemo(() => {
+    if (roleLoading || !roleData) {
+      return false;
+    }
+
+    if (moduleSlug) {
+      if (permissionType === 'view') {
+        return hasViewPermission(roleData, moduleSlug);
+      }
+      // Extend for other permission types as needed
+      return hasViewPermission(roleData, moduleSlug);
+    }
+
+    return canAccessRoute(roleData, pathname);
+  }, [roleData, roleLoading, moduleSlug, permissionType, pathname]);
+
+  return {
+    hasAccess,
+    loading: roleLoading,
+    roleData
+  };
+};
+
+/**
+ * Route Protection Component
+ * Specifically designed for protecting entire pages/routes
+ */
+export const RouteProtection: React.FC<{
+  children: React.ReactNode;
+  moduleSlug?: string;
+}> = ({ children, moduleSlug }) => {
+  return (
+    <PermissionGuard
+      moduleSlug={moduleSlug}
+      permissionType="view"
+      redirectOnUnauthorized={true}
+      fallback={
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="text-center">
+            <h1 className="text-2xl font-bold text-gray-800 mb-4">Access Denied</h1>
+            <p className="text-gray-600">You don't have permission to access this page.</p>
+          </div>
+        </div>
+      }
+    >
+      {children}
+    </PermissionGuard>
+  );
+};
+
+/**
+ * Action Button Guard
+ * For protecting specific actions like Create, Update, Delete buttons
+ */
+export const ActionGuard: React.FC<{
+  children: React.ReactNode;
+  moduleSlug: string;
+  action: 'create' | 'update' | 'delete';
+  fallback?: React.ReactNode;
+}> = ({ children, moduleSlug, action, fallback = null }) => {
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+
+  if (!roleData) {
+    return fallback as React.ReactElement;
+  }
+
+  // Map action to permission type
+  const permissionMap = {
+    create: 'create',
+    update: 'update',
+    delete: 'delete'
+  } as const;
+
+  const permissionType = permissionMap[action];
+  
+  return (
+    <PermissionGuard
+      moduleSlug={moduleSlug}
+      permissionType={permissionType}
+      redirectOnUnauthorized={false}
+      fallback={fallback}
+    >
+      {children}
+    </PermissionGuard>
+  );
+};

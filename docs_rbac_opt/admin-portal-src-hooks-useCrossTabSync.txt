@@ -1,0 +1,130 @@
+import { useEffect, useCallback } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+import { useLazyQuery } from '@apollo/client';
+import { toast } from 'react-toastify';
+import { 
+  crossTabSyncService, 
+  CrossTabSyncEvent, 
+  CrossTabSyncCallback 
+} from '@frontend/shared-utils';
+import { setRoleData, setRoleError, clearRoleData } from '../store/roleSlice';
+import { logout } from '../store/authSlice';
+import { GET_BY_ROLE } from '../graphql/queries/role';
+import { RootState } from '../store/store';
+
+/**
+ * Hook for handling cross-tab synchronization of role data in admin portal
+ * 
+ * This hook:
+ * 1. Listens for cross-tab sync events
+ * 2. Automatically refreshes role data when permissions change
+ * 3. Handles user logout across tabs
+ * 4. Provides functions to broadcast changes to other tabs
+ */
+export const useCrossTabSync = () => {
+  const dispatch = useDispatch();
+  const currentRoleData = useSelector((state: RootState) => state.role.roleData);
+  const isAuthenticated = useSelector((state: RootState) => state.auth.isAuthenticated);
+  
+  // GraphQL query to refresh role data
+  const [refreshRoleData, { loading: refreshingRole }] = useLazyQuery(GET_BY_ROLE, {
+    fetchPolicy: 'network-only',
+    onCompleted: (data) => {
+      if (data?.getByRole?.status === 'success' && data.getByRole.data) {
+        console.log('✅ Current user role data refreshed:', data.getByRole.data);
+        dispatch(setRoleData(data.getByRole.data));
+        
+        // Update sessionStorage with fresh role data
+        sessionStorage.setItem('admin_portal_role', JSON.stringify(data.getByRole.data));
+        
+        toast.success('Permissions updated - your access has been refreshed');
+      } else {
+        console.error('❌ Failed to refresh role data:', data?.getByRole);
+        dispatch(setRoleError('Failed to refresh role data'));
+      }
+    },
+    onError: (error) => {
+      console.error('❌ Error refreshing role data:', error);
+      dispatch(setRoleError(error.message));
+      toast.error('Failed to refresh permissions');
+    }
+  });
+
+  // Handle cross-tab sync events
+  const handleCrossTabEvent: CrossTabSyncCallback = useCallback((event: CrossTabSyncEvent) => {
+    console.log('📡 Cross-tab sync: Received event:', event);
+
+    switch (event.type) {
+      case 'USER_LOGOUT':
+        // Another tab logged out, log out this tab too
+        console.log('🔄 Cross-tab sync: User logged out in another tab, logging out...');
+        dispatch(logout());
+        dispatch(clearRoleData());
+        break;
+
+      case 'ROLE_DATA_REFRESH':
+        // Another tab refreshed role data, refresh this tab too
+        console.log('🔄 Cross-tab sync: Role data refreshed in another tab, refreshing...');
+        if (currentRoleData?.roleslug) {
+          refreshRoleData({
+            variables: { roleSlug: currentRoleData.roleslug }
+          });
+        }
+        break;
+
+      case 'ROLE_PERMISSIONS_CHANGED':
+        // Role permissions changed, check if it affects current user
+        if (event.payload.affectedRoleSlug && currentRoleData) {
+          const isAffected = crossTabSyncService.isCurrentUserAffected(event.payload.affectedRoleSlug);
+          
+          if (isAffected) {
+            console.log('🔄 Cross-tab sync: Current user affected by permission change, refreshing...');
+            
+            // Refresh role data from server to get latest permissions
+            refreshRoleData({
+              variables: { roleSlug: currentRoleData.roleslug }
+            });
+          } else {
+            console.log('🔍 Cross-tab sync: Permission change does not affect current user');
+          }
+        }
+        break;
+
+      default:
+        console.log('🔍 Cross-tab sync: Unknown event type:', event.type);
+    }
+  }, [dispatch, currentRoleData, refreshRoleData]);
+
+  // Initialize cross-tab sync
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    console.log('🔄 Cross-tab sync: Initializing for admin portal...');
+    const unsubscribe = crossTabSyncService.subscribe(handleCrossTabEvent);
+
+    return () => {
+      console.log('🔄 Cross-tab sync: Cleaning up...');
+      unsubscribe();
+    };
+  }, [isAuthenticated, handleCrossTabEvent]);
+
+  // Broadcast functions
+  const broadcastRolePermissionsChange = useCallback((affectedRoleSlug: string) => {
+    crossTabSyncService.broadcastRolePermissionsChange(affectedRoleSlug);
+  }, []);
+
+  const broadcastUserLogout = useCallback(() => {
+    crossTabSyncService.broadcastUserLogout();
+  }, []);
+
+  const broadcastRoleDataRefresh = useCallback(() => {
+    crossTabSyncService.broadcastRoleDataRefresh();
+  }, []);
+
+  return {
+    refreshingRole,
+    broadcastRolePermissionsChange,
+    broadcastUserLogout,
+    broadcastRoleDataRefresh
+  };
+};

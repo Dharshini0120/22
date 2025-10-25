@@ -1,0 +1,263 @@
+/**
+ * RBAC (Role-Based Access Control) Utilities
+ * 
+ * This module provides utility functions to check permissions based on Redux role state.
+ * It supports checking view, create, update, and delete permissions for specific modules.
+ */
+
+export interface Permission {
+  create: boolean;
+  view: boolean;
+  update: boolean;
+  delete: boolean;
+}
+
+export interface Module {
+  slug: string;
+  name: string;
+  permissions: Permission;
+}
+
+export interface RoleData {
+  _id: string;
+  roleName: string;
+  roleslug: string;
+  modules: Module[];
+  createdAt: string;
+  updatedAt: string;
+  __v: number;
+  description?: string;
+}
+
+/**
+ * Module slug mappings for consistent permission checking
+ */
+export const MODULE_SLUGS = {
+  DASHBOARD: 'dashboard',
+  ADMIN_MANAGEMENT: 'adminmanagement',
+  USER_MANAGEMENT: 'usermanagement',
+  TEMPLATES: 'templates',
+  ASSESSMENT_RECORDS: 'assessmentrecords',
+  SETTINGS: 'settings',
+  ROLES_AND_PERMISSIONS: 'rolesandpermissions',
+  AUDIT_LOGS: 'auditlogs',
+  FACILITY_AND_SERVICE: 'facilityandservice',
+  SECURITY: 'security',
+  TRANSACTIONS: 'transactions'
+} as const;
+
+/**
+ * Permission types
+ */
+export type PermissionType = 'view' | 'create' | 'update' | 'delete';
+
+/**
+ * Get module permissions by slug
+ */
+export const getModulePermissions = (roleData: RoleData | null, moduleSlug: string): Permission | null => {
+  if (!roleData || !roleData.modules) {
+    return null;
+  }
+
+  const module = roleData.modules.find(m => m.slug.toLowerCase() === moduleSlug.toLowerCase());
+  return module ? module.permissions : null;
+};
+
+/**
+ * Check if user has specific permission for a module
+ */
+export const hasPermission = (
+  roleData: RoleData | null,
+  moduleSlug: string,
+  permissionType: PermissionType
+): boolean => {
+  const permissions = getModulePermissions(roleData, moduleSlug);
+  if (!permissions) {
+    return false;
+  }
+
+  return permissions[permissionType] === true;
+};
+
+/**
+ * Check if user has view permission for a module
+ */
+export const hasViewPermission = (roleData: RoleData | null, moduleSlug: string): boolean => {
+  return hasPermission(roleData, moduleSlug, 'view');
+};
+
+/**
+ * Check if user has create permission for a module
+ */
+export const hasCreatePermission = (roleData: RoleData | null, moduleSlug: string): boolean => {
+  return hasPermission(roleData, moduleSlug, 'create');
+};
+
+/**
+ * Check if user has update permission for a module
+ */
+export const hasUpdatePermission = (roleData: RoleData | null, moduleSlug: string): boolean => {
+  return hasPermission(roleData, moduleSlug, 'update');
+};
+
+/**
+ * Check if user has delete permission for a module
+ */
+export const hasDeletePermission = (roleData: RoleData | null, moduleSlug: string): boolean => {
+  return hasPermission(roleData, moduleSlug, 'delete');
+};
+
+/**
+ * Check if user has any permission for a module
+ */
+export const hasAnyPermission = (roleData: RoleData | null, moduleSlug: string): boolean => {
+  const permissions = getModulePermissions(roleData, moduleSlug);
+  if (!permissions) {
+    return false;
+  }
+
+  return permissions.view || permissions.create || permissions.update || permissions.delete;
+};
+
+/**
+ * Get all modules that user has view permission for
+ */
+export const getViewableModules = (roleData: RoleData | null): Module[] => {
+  if (!roleData || !roleData.modules) {
+    return [];
+  }
+
+  return roleData.modules.filter(module => module.permissions.view === true);
+};
+
+/**
+ * Check if user is Super Admin (has all permissions)
+ */
+export const isSuperAdmin = (roleData: RoleData | null): boolean => {
+  return roleData?.roleslug?.toLowerCase() === 'superadmin';
+};
+
+/**
+ * Check if user is Admin
+ */
+export const isAdmin = (roleData: RoleData | null): boolean => {
+  return roleData?.roleslug?.toLowerCase() === 'admin';
+};
+
+/**
+ * Check if user has admin-level access (Super Admin or Admin)
+ */
+export const hasAdminAccess = (roleData: RoleData | null): boolean => {
+  return isSuperAdmin(roleData) || isAdmin(roleData);
+};
+
+/**
+ * Route to module slug mapping for permission checking
+ */
+export const ROUTE_MODULE_MAPPING = {
+  '/dashboard': MODULE_SLUGS.DASHBOARD,
+  '/admin-users': MODULE_SLUGS.ADMIN_MANAGEMENT,
+  '/admin-users/form': MODULE_SLUGS.ADMIN_MANAGEMENT,
+  '/hospital-users': MODULE_SLUGS.USER_MANAGEMENT,
+  '/hospital-users/view': MODULE_SLUGS.USER_MANAGEMENT,
+  '/templates': MODULE_SLUGS.TEMPLATES,
+  '/assessment': MODULE_SLUGS.ASSESSMENT_RECORDS,
+  '/assessment/form': MODULE_SLUGS.ASSESSMENT_RECORDS,
+  '/settings': MODULE_SLUGS.SETTINGS,
+  '/setting': MODULE_SLUGS.SETTINGS,
+  '/role-access': MODULE_SLUGS.ROLES_AND_PERMISSIONS,
+  '/facility-service': MODULE_SLUGS.FACILITY_AND_SERVICE,
+  '/security': MODULE_SLUGS.SECURITY,
+  '/transactions': MODULE_SLUGS.TRANSACTIONS,
+  '/help': MODULE_SLUGS.AUDIT_LOGS, // Assuming help maps to audit logs
+} as const;
+
+/**
+ * Get module slug from route path
+ */
+export const getModuleSlugFromRoute = (routePath: string): string | null => {
+  // Remove query parameters and hash
+  const cleanPath = routePath.split('?')[0].split('#')[0];
+  
+  // Check exact matches first
+  if (ROUTE_MODULE_MAPPING[cleanPath as keyof typeof ROUTE_MODULE_MAPPING]) {
+    return ROUTE_MODULE_MAPPING[cleanPath as keyof typeof ROUTE_MODULE_MAPPING];
+  }
+
+  // Check for partial matches (for dynamic routes)
+  for (const [route, moduleSlug] of Object.entries(ROUTE_MODULE_MAPPING)) {
+    if (cleanPath.startsWith(route)) {
+      return moduleSlug;
+    }
+  }
+
+  return null;
+};
+
+/**
+ * Check if user can access a specific route
+ */
+export const canAccessRoute = (roleData: RoleData | null, routePath: string): boolean => {
+  const moduleSlug = getModuleSlugFromRoute(routePath);
+  
+  if (!moduleSlug) {
+    // If no module mapping found, allow access (for public routes)
+    return true;
+  }
+
+  return hasViewPermission(roleData, moduleSlug);
+};
+
+/**
+ * Get redirect path for unauthorized access
+ */
+export const getUnauthorizedRedirectPath = (): string => {
+  return '/dashboard';
+};
+
+/**
+ * Navigation item to module slug mapping
+ */
+export const NAVIGATION_MODULE_MAPPING = {
+  dashboard: MODULE_SLUGS.DASHBOARD,
+  adminUsers: MODULE_SLUGS.ADMIN_MANAGEMENT,
+  hospitalUsers: MODULE_SLUGS.USER_MANAGEMENT,
+  templates: MODULE_SLUGS.TEMPLATES,
+  assessment: MODULE_SLUGS.ASSESSMENT_RECORDS,
+  settings: MODULE_SLUGS.SETTINGS,
+  roleAccess: MODULE_SLUGS.ROLES_AND_PERMISSIONS,
+  facilityService: MODULE_SLUGS.FACILITY_AND_SERVICE,
+  transaction: MODULE_SLUGS.TRANSACTIONS,
+  help: MODULE_SLUGS.AUDIT_LOGS,
+} as const;
+
+/**
+ * Filter navigation items based on view permissions
+ */
+export const filterNavigationByPermissions = (
+  navigationItems: any[],
+  roleData: RoleData | null
+): any[] => {
+  if (!roleData || !navigationItems) {
+    return [];
+  }
+
+  return navigationItems.filter(item => {
+    // Find the navigation key by matching the path
+    const navKey = Object.entries(NAVIGATION_MODULE_MAPPING).find(([key, moduleSlug]) => {
+      // You might need to adjust this logic based on your navigation structure
+      return item.path && (
+        item.path.includes(key.toLowerCase()) ||
+        key.toLowerCase().includes(item.path.replace('/', '').replace('-', ''))
+      );
+    });
+
+    if (navKey) {
+      const moduleSlug = navKey[1];
+      return hasViewPermission(roleData, moduleSlug);
+    }
+
+    // For items without clear mapping, check by path
+    return canAccessRoute(roleData, item.path || '');
+  });
+};

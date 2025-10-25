@@ -1,0 +1,181 @@
+import { createSelector } from '@reduxjs/toolkit';
+import { RootState } from '../store';
+import {
+  hasPermission,
+  hasViewPermission,
+  hasCreatePermission,
+  hasUpdatePermission,
+  hasDeletePermission,
+  hasAnyPermission,
+  getViewableModules,
+  isSuperAdmin,
+  isAdmin,
+  hasAdminAccess,
+  canAccessRoute,
+  getModulePermissions,
+  RoleData,
+  PermissionType,
+  MODULE_SLUGS
+} from '@frontend/shared-utils';
+
+// Base selectors
+export const selectRoleData = (state: RootState): RoleData | null => state.role.roleData;
+export const selectRoleLoading = (state: RootState): boolean => state.role.loading;
+export const selectRoleError = (state: RootState): string | null => state.role.error;
+
+// Permission check selectors
+export const selectHasPermission = createSelector(
+  [selectRoleData, (state: RootState, moduleSlug: string, permissionType: PermissionType) => ({ moduleSlug, permissionType })],
+  (roleData, { moduleSlug, permissionType }) => hasPermission(roleData, moduleSlug, permissionType)
+);
+
+export const selectHasViewPermission = createSelector(
+  [selectRoleData, (state: RootState, moduleSlug: string) => moduleSlug],
+  (roleData, moduleSlug) => hasViewPermission(roleData, moduleSlug)
+);
+
+export const selectHasCreatePermission = createSelector(
+  [selectRoleData, (state: RootState, moduleSlug: string) => moduleSlug],
+  (roleData, moduleSlug) => hasCreatePermission(roleData, moduleSlug)
+);
+
+export const selectHasUpdatePermission = createSelector(
+  [selectRoleData, (state: RootState, moduleSlug: string) => moduleSlug],
+  (roleData, moduleSlug) => hasUpdatePermission(roleData, moduleSlug)
+);
+
+export const selectHasDeletePermission = createSelector(
+  [selectRoleData, (state: RootState, moduleSlug: string) => moduleSlug],
+  (roleData, moduleSlug) => hasDeletePermission(roleData, moduleSlug)
+);
+
+export const selectHasAnyPermission = createSelector(
+  [selectRoleData, (state: RootState, moduleSlug: string) => moduleSlug],
+  (roleData, moduleSlug) => hasAnyPermission(roleData, moduleSlug)
+);
+
+// Route access selectors
+export const selectCanAccessRoute = createSelector(
+  [selectRoleData, (state: RootState, routePath: string) => routePath],
+  (roleData, routePath) => canAccessRoute(roleData, routePath)
+);
+
+// Module permissions selector
+export const selectModulePermissions = createSelector(
+  [selectRoleData, (state: RootState, moduleSlug: string) => moduleSlug],
+  (roleData, moduleSlug) => getModulePermissions(roleData, moduleSlug)
+);
+
+// Viewable modules selector
+export const selectViewableModules = createSelector(
+  [selectRoleData],
+  (roleData) => getViewableModules(roleData)
+);
+
+// Role type selectors
+export const selectIsSuperAdmin = createSelector(
+  [selectRoleData],
+  (roleData) => isSuperAdmin(roleData)
+);
+
+export const selectIsAdmin = createSelector(
+  [selectRoleData],
+  (roleData) => isAdmin(roleData)
+);
+
+export const selectHasAdminAccess = createSelector(
+  [selectRoleData],
+  (roleData) => hasAdminAccess(roleData)
+);
+
+// Specific module permission selectors for common modules
+export const selectDashboardPermissions = createSelector(
+  [selectRoleData],
+  (roleData) => getModulePermissions(roleData, MODULE_SLUGS.DASHBOARD)
+);
+
+export const selectAdminManagementPermissions = createSelector(
+  [selectRoleData],
+  (roleData) => getModulePermissions(roleData, MODULE_SLUGS.ADMIN_MANAGEMENT)
+);
+
+export const selectUserManagementPermissions = createSelector(
+  [selectRoleData],
+  (roleData) => getModulePermissions(roleData, MODULE_SLUGS.USER_MANAGEMENT)
+);
+
+export const selectTemplatesPermissions = createSelector(
+  [selectRoleData],
+  (roleData) => getModulePermissions(roleData, MODULE_SLUGS.TEMPLATES)
+);
+
+export const selectAssessmentRecordsPermissions = createSelector(
+  [selectRoleData],
+  (roleData) => getModulePermissions(roleData, MODULE_SLUGS.ASSESSMENT_RECORDS)
+);
+
+export const selectSettingsPermissions = createSelector(
+  [selectRoleData],
+  (roleData) => getModulePermissions(roleData, MODULE_SLUGS.SETTINGS)
+);
+
+export const selectRolesAndPermissionsPermissions = createSelector(
+  [selectRoleData],
+  (roleData) => getModulePermissions(roleData, MODULE_SLUGS.ROLES_AND_PERMISSIONS)
+);
+
+export const selectFacilityAndServicePermissions = createSelector(
+  [selectRoleData],
+  (roleData) => getModulePermissions(roleData, MODULE_SLUGS.FACILITY_AND_SERVICE)
+);
+
+export const selectTransactionsPermissions = createSelector(
+  [selectRoleData],
+  (roleData) => getModulePermissions(roleData, MODULE_SLUGS.TRANSACTIONS)
+);
+
+// Convenience hooks for specific modules
+export const selectCanViewDashboard = createSelector(
+  [selectRoleData],
+  (roleData) => hasViewPermission(roleData, MODULE_SLUGS.DASHBOARD)
+);
+
+export const selectCanViewAdminManagement = createSelector(
+  [selectRoleData],
+  (roleData) => hasViewPermission(roleData, MODULE_SLUGS.ADMIN_MANAGEMENT)
+);
+
+export const selectCanViewUserManagement = createSelector(
+  [selectRoleData],
+  (roleData) => hasViewPermission(roleData, MODULE_SLUGS.USER_MANAGEMENT)
+);
+
+export const selectCanViewTemplates = createSelector(
+  [selectRoleData],
+  (roleData) => hasViewPermission(roleData, MODULE_SLUGS.TEMPLATES)
+);
+
+export const selectCanViewAssessmentRecords = createSelector(
+  [selectRoleData],
+  (roleData) => hasViewPermission(roleData, MODULE_SLUGS.ASSESSMENT_RECORDS)
+);
+
+export const selectCanViewSettings = createSelector(
+  [selectRoleData],
+  (roleData) => hasViewPermission(roleData, MODULE_SLUGS.SETTINGS)
+);
+
+export const selectCanViewRolesAndPermissions = createSelector(
+  [selectRoleData],
+  (roleData) => hasViewPermission(roleData, MODULE_SLUGS.ROLES_AND_PERMISSIONS)
+);
+
+export const selectCanViewFacilityAndService = createSelector(
+  [selectRoleData],
+  (roleData) => hasViewPermission(roleData, MODULE_SLUGS.FACILITY_AND_SERVICE)
+);
+
+export const selectCanViewTransactions = createSelector(
+  [selectRoleData],
+  (roleData) => hasViewPermission(roleData, MODULE_SLUGS.TRANSACTIONS)
+);

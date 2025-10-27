@@ -1,0 +1,96 @@
+import { useMemo } from 'react';
+import { useSelector } from 'react-redux';
+import { RootState } from '../store';
+
+export interface ModulePermissions {
+  canCreate: boolean;
+  canRead: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+}
+
+export function useModulePermissions(moduleName: string): ModulePermissions {
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+  const isSuperAdmin = useSelector((state: RootState) => 
+    state.auth.user?.role?.toLowerCase() === 'super admin' || 
+    state.auth.user?.role?.toLowerCase() === 'superadmin'
+  );
+
+  return useMemo(() => {
+    // If no role data, deny all permissions
+    if (!roleData?.modules) {
+      return {
+        canCreate: false,
+        canRead: false,
+        canUpdate: false,
+        canDelete: false,
+      };
+    }
+
+    // Find the specific module in user's permissions
+    const targetModule = roleData.modules.find((mod) => 
+      mod.name?.toLowerCase() === moduleName.toLowerCase() ||
+      mod.slug?.toLowerCase() === moduleName.toLowerCase()
+    );
+
+    // If module not found, deny all permissions
+    if (!targetModule?.permissions) {
+      return {
+        canCreate: false,
+        canRead: false,
+        canUpdate: false,
+        canDelete: false,
+      };
+    }
+
+    // Return boolean flags for each permission type based on actual role permissions
+    // SuperAdmin bypass is removed - permissions are now based on actual role data
+    const permissions = {
+      canCreate: targetModule.permissions.create || false,
+      canRead: targetModule.permissions.view || false, // Map 'view' to 'read'
+      canUpdate: targetModule.permissions.update || false,
+      canDelete: targetModule.permissions.delete || false,
+    };
+    
+    console.log(`🔍 useModulePermissions(${moduleName}) - Target module:`, targetModule);
+    console.log(`🔍 useModulePermissions(${moduleName}) - Permissions:`, permissions);
+    
+    return permissions;
+  }, [roleData, moduleName]);
+}
+
+// Hook to check if user has any permission for a module
+export function useHasModuleAccess(moduleName: string): boolean {
+  const { canCreate, canRead, canUpdate, canDelete } = useModulePermissions(moduleName);
+  return canCreate || canRead || canUpdate || canDelete;
+}
+
+// Hook to get all accessible modules for the current user
+export function useAccessibleModules(): string[] {
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+  const isSuperAdmin = useSelector((state: RootState) => 
+    state.auth.user?.role?.toLowerCase() === 'super admin' || 
+    state.auth.user?.role?.toLowerCase() === 'superadmin'
+  );
+
+  return useMemo(() => {
+    // If no role data, return empty array
+    if (!roleData?.modules) {
+      return [];
+    }
+
+    // Return modules that have at least one permission based on actual role data
+    const accessibleModules = roleData.modules
+      .filter(module => {
+        const perms = module.permissions;
+        return perms?.create || perms?.view || perms?.update || perms?.delete;
+      })
+      .map(module => module.name)
+      .filter(Boolean);
+    
+    console.log('🔍 useAccessibleModules - Role modules:', roleData.modules);
+    console.log('🔍 useAccessibleModules - Accessible modules:', accessibleModules);
+    
+    return accessibleModules;
+  }, [roleData]);
+}

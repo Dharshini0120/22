@@ -1,0 +1,68 @@
+import React, { useMemo, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useSelector } from 'react-redux';
+import { RootState } from '../../store';
+import { useModulePermissions } from '../../hooks/useModulePermissions';
+
+interface RouteGuardProps {
+  children: React.ReactNode;
+  requiredModule?: string;
+  requiredPermission?: 'create' | 'read' | 'update' | 'delete';
+}
+
+export const RouteGuard: React.FC<RouteGuardProps> = ({ 
+  children, 
+  requiredModule,
+  requiredPermission = 'read' 
+}) => {
+  const router = useRouter();
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+
+  const isAllowed = useMemo(() => {
+    // If no role data, deny access
+    if (!roleData?.modules) return false;
+
+    // If no required module specified, allow access
+    if (!requiredModule) return true;
+
+    // Find the module in user's permissions
+    const targetModule = roleData.modules.find((mod) => 
+      mod.name?.toLowerCase() === requiredModule.toLowerCase() ||
+      mod.slug?.toLowerCase() === requiredModule.toLowerCase()
+    );
+
+    if (!targetModule?.permissions) return false;
+
+    // Check the specific permission based on actual role data
+    // SuperAdmin bypass removed - permissions are now based on actual role data
+    switch (requiredPermission) {
+      case 'create':
+        return targetModule.permissions.create || false;
+      case 'read':
+        return targetModule.permissions.view || false;
+      case 'update':
+        return targetModule.permissions.update || false;
+      case 'delete':
+        return targetModule.permissions.delete || false;
+      default:
+        return false;
+    }
+  }, [roleData, requiredModule, requiredPermission]);
+
+  const finalIsAllowed = isAllowed;
+
+  useEffect(() => {
+    if (!finalIsAllowed) {
+      router.replace('/unauthorized');
+    }
+  }, [finalIsAllowed, router]);
+
+  // Don't render children if we're redirecting or if role data is not loaded
+  if (!roleData || !finalIsAllowed) {
+    return null;
+  }
+
+  return <>{children}</>;
+};
+
+export default RouteGuard;

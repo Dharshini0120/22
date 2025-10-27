@@ -1,0 +1,160 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+"use client"
+import React, { useEffect, useState, useMemo } from "react";
+import { useSelector } from 'react-redux';
+import { SharedDashboardHeader } from "@frontend/shared-ui";
+import { SharedDashboardDrawer } from "@frontend/shared-ui";
+import { Box, Toolbar } from "@mui/material";
+import DashboardIcon from '@mui/icons-material/Dashboard';
+import AssessmentIcon from '@mui/icons-material/Assessment';
+import PeopleIcon from '@mui/icons-material/People';
+import SettingsIcon from '@mui/icons-material/Settings';
+import { ArrowBack, HelpOutline, MenuOpen } from "@mui/icons-material";
+import ViewListIcon from '@mui/icons-material/ViewList';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import SupervisorAccountIcon from '@mui/icons-material/SupervisorAccount';
+import Person2Icon from '@mui/icons-material/Person2';
+import TableViewIcon from '@mui/icons-material/TableView';
+import AttachMoneyOutlinedIcon from '@mui/icons-material/AttachMoneyOutlined';
+import SecurityIcon from '@mui/icons-material/Security';
+
+import { User2Icon } from 'lucide-react';
+import { RootState } from '../../store/store';
+import { useAccessibleModules, useModulePermissions } from '../../hooks/useModulePermissions';
+
+// Define all possible navigation items with module mapping
+const allNavigationItems = {
+  dashboard: { 
+    text: 'Dashboard', 
+    icon: <DashboardIcon />, 
+    path: '/dashboard',
+    moduleName: 'Dashboard',
+    matchPaths: ['/dashboard'] 
+  },
+  adminManagement: { 
+    text: 'Admin Management', 
+    icon: <Person2Icon />, 
+    path: '/admin-users', 
+    moduleName: 'Admin Management',
+    matchPaths: ['/admin-users', '/admin-users/form'] 
+  },
+  userManagement: { 
+    text: 'User Management', 
+    icon: <PeopleIcon />, 
+    path: '/hospital-users', 
+    moduleName: 'User Management',
+    matchPaths: ['/hospital-users', '/hospital-users/view'] 
+  },
+  templates: { 
+    text: 'Templates', 
+    icon: <AccountTreeIcon />, 
+    path: '/templates',
+    moduleName: 'Templates',
+    matchPaths: ['/templates'] 
+  },
+  assessmentRecords: { 
+    text: 'Assessment Records', 
+    icon: <ViewListIcon />, 
+    path: '/assessment',
+    moduleName: 'Assessment Records',
+    matchPaths: ['/assessment'] 
+  },
+  settings: { 
+    text: 'Settings', 
+    icon: <SettingsIcon />, 
+    path: '/setting',
+    moduleName: 'Settings',
+    matchPaths: ['/setting'] 
+  },
+  rolesAndPermissions: { 
+    text: 'Roles And Permissions', 
+    icon: <SupervisorAccountIcon />, 
+    path: '/role-access',
+    moduleName: 'Roles And Permissions',
+    matchPaths: ['/role-access'] 
+  },
+  auditLogs: { 
+    text: 'Audit Logs', 
+    icon: <AssessmentIcon />, 
+    path: '/audit-logs',
+    moduleName: 'Audit Logs',
+    matchPaths: ['/audit-logs'] 
+  },
+  facilityAndService: { 
+    text: 'Facility And Service', 
+    icon: <TableViewIcon />, 
+    path: '/facility-service',
+    moduleName: 'Facility And Service',
+    matchPaths: ['/facility-service'] 
+  },
+  security: { 
+    text: 'Security', 
+    icon: <SecurityIcon />, 
+    path: '/security',
+    moduleName: 'Security',
+    matchPaths: ['/security'] 
+  },
+  transactions: { 
+    text: 'Transactions', 
+    icon: <AttachMoneyOutlinedIcon />, 
+    path: '/transactions',
+    moduleName: 'Transactions',
+    matchPaths: ['/transactions'] 
+  },
+  help: { 
+    text: 'Help', 
+    icon: <HelpOutline />, 
+    path: '/help',
+    moduleName: 'Help',
+    matchPaths: ['/help'] 
+  },
+};
+
+// Permission-based navigation configuration
+const getNavigationItemsByPermissions = (accessibleModules: string[]) => {
+  return Object.values(allNavigationItems).filter(item => {
+    // Always show Dashboard and Help
+    if (item.moduleName === 'Dashboard' || item.moduleName === 'Help') {
+      return true;
+    }
+    
+    // Check if user has access to this module
+    return accessibleModules.includes(item.moduleName);
+  });
+};
+
+const DashboardLayout = ({ children }) => {
+  const [drawerOpen, setDrawerOpen] = useState(true);
+  
+  // Get accessible modules based on user permissions
+  const accessibleModules = useAccessibleModules();
+  
+  console.log('🔍 DashboardLayout - Accessible modules:', accessibleModules);
+  console.log('🔍 DashboardLayout - Role data:', useSelector((state: RootState) => state.role.roleData));
+  
+  // Get navigation items based on permissions
+  const navigationItems = useMemo(() => {
+    return getNavigationItemsByPermissions(accessibleModules);
+  }, [accessibleModules]);
+
+  return (
+    <Box sx={{ display: "flex" }}>
+      <SharedDashboardHeader open={drawerOpen} onToggle={setDrawerOpen} />
+      <SharedDashboardDrawer navigationItems={navigationItems} open={drawerOpen} onToggle={setDrawerOpen} />
+      <Box
+        component="main"
+        sx={{
+          flexGrow: 1,
+          p: 0,
+          backgroundColor: "#f9fbfc",
+          minHeight: "100vh",
+        }}
+      >
+        <Toolbar />
+        <Box sx={{ padding: 4 }}>{children}</Box>
+      </Box>
+    </Box>
+  );
+};
+ 
+export default DashboardLayout;

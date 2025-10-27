@@ -1,0 +1,139 @@
+ok now in admin portal  Filter menu items based on permissions and  Redirect to first available module and then Detailed permission check - ensures user has specific permissions for the current route by using moduleNameToPathMap,note SuperAdmin has access to everything  example given below 
+
+
+
+const moduleNameToPathMap: Record<string, string> = {
+  "Dashboard": "/dashboard",
+  "Datasets": "/datasets",
+  "Forms": "/forms",
+  "profile": "/profile",
+};
+
+const isAllowed = useMemo(() => {
+  // SuperAdmin has access to everything
+  if (isSuperAdmin) return true;
+  if (!pathname || !permissions) return false;
+
+  return permissions.some(({ module_name, permissions: perms }) => {
+    const basePath = moduleNameToPathMap[module_name];
+    if (!basePath) return false;
+
+    // Check different path patterns
+    if (pathname === basePath) return true;
+    if (pathname.startsWith(`${basePath}/create`) && perms.includes("create")) return true;
+    if (pathname.startsWith(`${basePath}/edit`) && perms.includes("update")) return true;
+    if (pathname.startsWith(`${basePath}/view`) && perms.includes("read")) return true;
+    return false;
+  });
+}, [isSuperAdmin, pathname, permissions]);
+
+useEffect(() => {
+  if (!isAllowed) {
+    router.replace("/unauthorized");
+  }
+}, [isAllowed, router]);
+
+then use  Permission Hook (useModulePermissions.ts)
+how it works?
+Takes a module name (e.g., "Users", "Dashboard")
+Searches user's permissions for that module
+Returns boolean flags for each CRUD operation
+Components use these flags to show/hide features
+
+eg)
+
+export function useModulePermissions(moduleName: string): ModulePermissions {
+  const accessRights = useAppSelector((state: RootState) =>
+    state?.accessRights?.accessRightsList?.modules
+  );
+
+  return useMemo(() => {
+    // Find the specific module in user's permissions
+    const targetModule = accessRights?.find((mod) =>
+      mod?.module_name === moduleName
+    );
+
+    // Extract permission names
+    const perms = targetModule?.permissions?.map((p) => p?.permission_name) || [];
+
+    // Return boolean flags for each permission type
+    return {
+      canCreate: perms.includes("create"),
+      canRead: perms.includes("read"),
+      canUpdate: perms.includes("update"),
+      canDelete: perms.includes("delete"),
+    };
+  }, [accessRights, moduleName]);
+}
+
+
+and then basic permiision check like below example 
+
+// In datasets/page.tsx
+const DatasetsPage: React.FC = () => {
+  const {canRead} = useModulePermissions("Datasets");
+
+  // Only render if user can read datasets
+  if (!canRead) {
+    return <div>Access Denied</div>;
+  }
+
+  return (
+    <div>
+      <h1>Datasets</h1>
+      {/* Dataset content */}
+    </div>
+  );
+};
+
+
+also Conditional Button Rendering like below example 
+const UserManagement = () => {
+  const { canCreate, canUpdate, canDelete } = useModulePermissions("Users");
+
+  return (
+    <div>
+      <h1>User Management</h1>
+
+      {/* Show create button only if user has create permission */}
+      {canCreate && (
+        <button onClick={handleCreateUser}>
+          Create New User
+        </button>
+      )}
+
+      <table>
+        {users.map(user => (
+          <tr key={user.id}>
+            <td>{user.name}</td>
+            <td>
+              {/* Show edit button only if user has update permission */}
+              {canUpdate && (
+                <button onClick={() => handleEdit(user.id)}>Edit</button>
+              )}
+
+              {/* Show delete button only if user has delete permission */}
+              {canDelete && (
+                <button onClick={() => handleDelete(user.id)}>Delete</button>
+              )}
+            </td>
+          </tr>
+        ))}
+      </table>
+    </div>
+  );
+};
+
+in sidebar 
+
+What happens:
+
+All possible menu items are defined
+User's accessible modules are retrieved from Redux
+Menu items are filtered to show only accessible modules
+SuperAdmin sees all items, regular users see filtered items
+
+
+
+
+

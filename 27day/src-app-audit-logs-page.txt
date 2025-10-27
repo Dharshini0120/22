@@ -1,0 +1,122 @@
+"use client";
+
+import React from 'react';
+import { Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, CircularProgress } from '@mui/material';
+import DashboardLayout from '../../components/layout/DashboardLayout';
+import RouteGuard from '../../components/guards/RouteGuard';
+import { useModulePermissions } from '../../hooks/useModulePermissions';
+import { useSelector } from 'react-redux';
+import { RootState } from '../../store';
+
+const AuditLogsPage: React.FC = () => {
+  const { canRead, canCreate, canUpdate, canDelete } = useModulePermissions("Audit Logs");
+  const roleData = useSelector((state: RootState) => state.role.roleData);
+  
+  // Debug logging
+  console.log('🔍 AuditLogsPage - Permissions:', { canRead, canCreate, canUpdate, canDelete });
+  console.log('🔍 AuditLogsPage - Role data loaded:', !!roleData);
+  
+  // Show loading if role data is not loaded yet
+  if (!roleData) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  // Sample audit log data
+  const auditLogs = [
+    {
+      id: 1,
+      action: 'User Login',
+      user: 'john.doe@example.com',
+      timestamp: '2024-01-15 10:30:25',
+      ipAddress: '192.168.1.100',
+      status: 'Success'
+    },
+    {
+      id: 2,
+      action: 'Role Updated',
+      user: 'admin@example.com',
+      timestamp: '2024-01-15 09:15:42',
+      ipAddress: '192.168.1.101',
+      status: 'Success'
+    },
+    {
+      id: 3,
+      action: 'Failed Login Attempt',
+      user: 'unknown@example.com',
+      timestamp: '2024-01-15 08:45:12',
+      ipAddress: '192.168.1.102',
+      status: 'Failed'
+    },
+    {
+      id: 4,
+      action: 'Data Export',
+      user: 'analyst@example.com',
+      timestamp: '2024-01-14 16:20:33',
+      ipAddress: '192.168.1.103',
+      status: 'Success'
+    },
+  ];
+
+  return (
+    <RouteGuard requiredModule="Audit Logs" requiredPermission="read">
+      <DashboardLayout>
+        <Box>
+          <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold', mb: 3 }}>
+            Audit Logs
+          </Typography>
+
+          <Paper sx={{ width: '100%', overflow: 'hidden' }}>
+            <TableContainer>
+              <Table>
+                <TableHead>
+                  <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
+                    <TableCell sx={{ fontWeight: 'bold' }}>Action</TableCell>
+                    <TableCell sx={{ fontWeight: 'bold' }}>User</TableCell>
+                    <TableCell sx={{ fontWeight: 'bold' }}>Timestamp</TableCell>
+                    <TableCell sx={{ fontWeight: 'bold' }}>IP Address</TableCell>
+                    <TableCell sx={{ fontWeight: 'bold' }}>Status</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {auditLogs.map((log) => (
+                    <TableRow key={log.id} hover>
+                      <TableCell>{log.action}</TableCell>
+                      <TableCell>{log.user}</TableCell>
+                      <TableCell>{log.timestamp}</TableCell>
+                      <TableCell>{log.ipAddress}</TableCell>
+                      <TableCell>
+                        <Chip
+                          label={log.status}
+                          color={log.status === 'Success' ? 'success' : 'error'}
+                          size="small"
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Paper>
+
+          <Box sx={{ mt: 3, p: 2, backgroundColor: '#e3f2fd', borderRadius: 1 }}>
+            <Typography variant="h6" gutterBottom>
+              Permission Status
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Read: {canRead ? '✅' : '❌'} | 
+              Create: {canCreate ? '✅' : '❌'} | 
+              Update: {canUpdate ? '✅' : '❌'} | 
+              Delete: {canDelete ? '✅' : '❌'}
+            </Typography>
+          </Box>
+        </Box>
+      </DashboardLayout>
+    </RouteGuard>
+  );
+};
+
+export default AuditLogsPage;

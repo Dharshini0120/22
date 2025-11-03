@@ -1,0 +1,353 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+"use client";
+import React, { useState, useEffect } from "react";
+import {
+  AppBar,
+  Avatar,
+  Box,
+  Button,
+  CssBaseline,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Divider,
+  IconButton,
+  InputBase,
+  Toolbar,
+  Typography,
+  useTheme,
+  useMediaQuery,
+} from "@mui/material";
+import { alpha } from "@mui/material/styles";
+import SearchIcon from "@mui/icons-material/Search";
+import { NotificationsNoneOutlined, Logout } from "@mui/icons-material";
+import { useMutation } from "@apollo/client";
+import { LOGOUT_MUTATION, ADMIN_LOGOUT_MUTATION } from "../../graphql/mutations/auth";
+import { useRouter } from "next/navigation";
+import { toast } from "react-toastify";
+import { LogoutResponse } from "../../../../shared-types/src/auth/auth.types";
+import { ArrowRightFromLine } from "lucide-react";
+import { useSelector } from "react-redux";
+import Image from "next/image";
+
+const drawerWidth = 300;
+
+interface DashboardHeaderProps {
+  open: boolean;
+  onToggle?: (open: boolean) => void;
+  notificationsEnabled?: boolean;
+  NotificationBellComponent?: React.ComponentType;
+}
+
+export default function DashboardHeader({
+  open,
+  onToggle,
+  notificationsEnabled = false,
+  NotificationBellComponent,
+}: DashboardHeaderProps) {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const isTablet = useMediaQuery(theme.breakpoints.between("sm", "md"));
+  // Check if screen is between 900px and 1400px (drawer is overlay in this range)
+  const isOverlayRange = useMediaQuery("(min-width: 900px) and (max-width: 1400px)");
+  const [openDialog, setOpenDialog] = useState(false);
+  const router = useRouter();
+  const authSlice = useSelector((state: any) => state.auth?.user);
+  const roleSlice = useSelector((state: any) => state.role.roleData);
+
+  const isAdminPortal =
+    authSlice?.role !== "user" ||
+    (typeof window !== "undefined" && window.location.pathname.includes("/admin"));
+
+  useEffect(() => {
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+    document.documentElement.style.setProperty("--scrollbar-width", `${scrollbarWidth}px`);
+  }, []);
+
+  const [userLogoutMutation, { loading: userLoading }] =
+    useMutation<{ logout: LogoutResponse }>(LOGOUT_MUTATION);
+  const [adminLogoutMutation, { loading: adminLoading }] =
+    useMutation<{ adminlogout: LogoutResponse }>(ADMIN_LOGOUT_MUTATION);
+  const isLoading = isAdminPortal ? adminLoading : userLoading;
+
+  const handleLogout = async () => {
+    try {
+      let result: LogoutResponse | undefined;
+      if (isAdminPortal) {
+        const { data } = await adminLogoutMutation();
+        result = data?.adminlogout;
+      } else {
+        const { data } = await userLogoutMutation();
+        result = data?.logout;
+      }
+
+      if (result?.status !== "success") {
+        toast.error(result?.message || "Logout failed");
+        return;
+      }
+
+      toast.success(result?.message || "Logged out successfully");
+      if (typeof window !== "undefined") sessionStorage.clear();
+      router.push("/");
+    } catch (err: any) {
+      console.error("Logout error:", err);
+      toast.error("An error occurred while logging out.");
+    } finally {
+      setOpenDialog(false);
+    }
+  };
+
+  const handleDrawerToggle = () => onToggle?.(!open);
+
+  return (
+    <>
+      <CssBaseline />
+      <AppBar
+        position="fixed"
+        sx={{
+          zIndex: theme.zIndex.drawer + 1,
+          backgroundColor: "#fff",
+          color: "#000",
+          borderBottom: "1px solid #e4e5e7",
+          boxShadow: "none",
+          transition: theme.transitions.create(["width", "margin"], {
+            easing: theme.transitions.easing.easeInOut,
+            duration: theme.transitions.duration.standard,
+          }),
+          ...(isMobile || isOverlayRange
+            ? { width: "100%", marginLeft: 0 }
+            : open
+            ? { marginLeft: `${drawerWidth}px`, width: `calc(100% - ${drawerWidth}px)` }
+            : { marginLeft: 0, width: "100%" }),
+        }}
+      >
+        <Toolbar
+          sx={{
+            minHeight: { xs: 56, sm: 64 },
+            px: { xs: 1.5, sm: 2 },
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "nowrap",
+            gap: 1,
+          }}
+        >
+          {/* Drawer Toggle (Always shown on mobile and overlay range, hidden when drawer is open on larger screens) */}
+          <IconButton
+            color="inherit"
+            onClick={handleDrawerToggle}
+            edge="start"
+            sx={{
+              border: "1px solid #e4e5e7",
+              borderRadius: "8px",
+              ml: { xs: 0.5, sm: 1 },
+              mr: { xs: 1, sm: 2 },
+              display: {
+                xs: "inline-flex",
+                sm: isOverlayRange || !open ? "inline-flex" : "none",
+                md: isOverlayRange || !open ? "inline-flex" : "none",
+              },
+              flexShrink: 0,
+            }}
+          >
+            <ArrowRightFromLine size={16} />
+          </IconButton>
+
+          {/* Logo (shown in overlay range 900-1400px) */}
+          {isOverlayRange && (
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                height: 40,
+                ml: 2,
+                flexShrink: 0,
+              }}
+            >
+              <Image
+                src="/medical-logo.png"
+                alt="Company Logo"
+                width={160}
+                height={40}
+                priority
+                quality={100}
+                style={{
+                  width: "auto",
+                  height: "100%",
+                  objectFit: "contain",
+                }}
+              />
+            </Box>
+          )}
+
+          {/* Search (hidden on small screens, tablets, and overlay range) */}
+          {!isMobile && !isTablet && !isOverlayRange && (
+            <Box
+              sx={{
+                position: "relative",
+                borderRadius: 2,
+                border: `1px solid ${alpha(theme.palette.common.black, 0.12)}`,
+                backgroundColor: alpha(theme.palette.common.black, 0.0),
+                "&:hover": { backgroundColor: alpha(theme.palette.common.black, 0.05) },
+                mr: theme.spacing(2),
+                flexShrink: 0,
+              }}
+            >
+              <Box
+                sx={{
+                  padding: theme.spacing(0, 2),
+                  height: "100%",
+                  position: "absolute",
+                  pointerEvents: "none",
+                  display: "flex",
+                  alignItems: "center",
+                }}
+              >
+                <SearchIcon />
+              </Box>
+              <InputBase
+                placeholder="Search…"
+                sx={{
+                  color: "inherit",
+                  "& .MuiInputBase-input": {
+                    padding: theme.spacing(1, 1, 1, 0),
+                    paddingLeft: `calc(1em + ${theme.spacing(4)})`,
+                    // transition: theme.transitions.create("width"),
+                    // width: isTablet ? "18ch" : "28ch",
+                    width: "26ch",
+                  },
+                }}
+              />
+            </Box>
+          )}
+
+          <Box sx={{ flexGrow: 1 }} />
+
+          {/* Notification */}
+          {notificationsEnabled && NotificationBellComponent ? (
+            <NotificationBellComponent />
+          ) : (
+            <IconButton color="inherit" sx={{ mx: { xs: 0, sm: 1 } }}>
+              <NotificationsNoneOutlined sx={{ fontSize: 26 }} />
+            </IconButton>
+          )}
+
+          {/* Divider (hidden in overlay range) */}
+          {!isMobile && !isTablet && !isOverlayRange && (
+            <Divider
+              orientation="vertical"
+              flexItem
+              // sx={{ mx: 2, height: 40, alignSelf: "center" }}
+              sx={{ mx: 1.5, height: 40, alignSelf: "center" }}
+            />
+          )}
+
+          {/* Profile */}
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: { xs: 0.8, sm: 1.5 },
+              cursor: "pointer",
+              flexShrink: 0,
+            }}
+            onClick={() => router.push("/setting")}
+          >
+            <Avatar
+              alt="Profile"
+              src={authSlice?.profileUrl}
+              sx={{
+                width: 40,
+                height: 40,
+                borderRadius: "8px",
+                backgroundColor: "#408bff",
+                color: "#fff",
+                fontWeight: 600,
+              }}
+              variant="square"
+            >
+              {authSlice?.fullName
+                ? authSlice.fullName.charAt(0).toUpperCase()
+                : "A"}
+            </Avatar>
+
+            {/* Hide name on mobile and overlay range (900-1400px), show on larger screens */}
+            {!isMobile && !isOverlayRange && (
+              <Box
+                sx={{
+                  // display: "flex",
+                  display: { xs: "none", sm: "none", md: "flex" },
+                  flexDirection: "column",
+                  maxWidth: { sm: 140, md: 180 },
+                  overflow: "hidden",
+                }}
+              >
+                <Typography
+                  noWrap
+                  variant="body1"
+                  sx={{ fontWeight: 600, textTransform: "capitalize" }}
+                >
+                  {authSlice?.fullName}
+                </Typography>
+                <Typography
+                  noWrap
+                  variant="caption"
+                  sx={{ textTransform: "capitalize" }}
+                >
+                  {roleSlice?.roleName}
+                </Typography>
+              </Box>
+            )}
+          </Box>
+
+          {/* Logout */}
+          <IconButton
+            onClick={() => setOpenDialog(true)}
+            sx={{
+              ml: { xs: 1, sm: 2 },
+              border: "1px solid #e4e5e7",
+              borderRadius: "8px",
+            }}
+          >
+            <Logout sx={{ fontSize: 16 }} />
+          </IconButton>
+        </Toolbar>
+      </AppBar>
+
+      {/* Logout Dialog */}
+      <Dialog
+        open={openDialog}
+        onClose={() => setOpenDialog(false)}
+        PaperProps={{
+          sx: {
+            backgroundColor: theme.palette.background.paper,
+            color: theme.palette.text.primary,
+            borderRadius: 2,
+            minWidth: { xs: "90%", sm: 400 },
+          },
+        }}
+      >
+        <DialogTitle sx={{ fontWeight: 600 }}>Confirm Logout</DialogTitle>
+        <DialogContent sx={{ py: 3 }}>
+          {isAdminPortal
+            ? "Are you sure you want to logout from admin portal?"
+            : "Are you sure you want to logout?"}
+        </DialogContent>
+        <DialogActions sx={{ justifyContent: "center", py: 2 }}>
+          <Button onClick={() => setOpenDialog(false)} variant="outlined">
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={handleLogout}
+            disabled={isLoading}
+          >
+            {isLoading ? "Logging out..." : "Logout"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </>
+  );
+}

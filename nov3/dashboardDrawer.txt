@@ -1,0 +1,301 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+"use client";
+
+import React from "react";
+import {
+  Box,
+  Drawer,
+  IconButton,
+  List,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  Theme,
+  Toolbar,
+  Typography,
+  useMediaQuery,
+  useTheme,
+  Tooltip,
+} from "@mui/material";
+import { useRouter, usePathname } from "next/navigation";
+import { ArrowLeftFromLine } from "lucide-react";
+import Image from "next/image";
+
+export const DRAWER_WIDTH = 300;
+export const COLLAPSED_WIDTH = 80;
+export const HEADER_HEIGHT = 64;
+export const BORDER_COLOR = "#E6E8EB";
+
+interface AppDrawerProps {
+  navigationItems: Array<{
+    text: string;
+    path: string;
+    icon?: React.ReactNode;
+    matchPaths?: string[];
+    disabled?: boolean;
+  }>;
+  open: boolean;
+  onToggle: (open: boolean) => void;
+}
+
+export default function AppDrawer({
+  navigationItems,
+  open,
+  onToggle,
+}: AppDrawerProps) {
+  const theme = useTheme();
+  const router = useRouter();
+  const pathname = usePathname();
+  const isMobile = useMediaQuery(theme.breakpoints.down("md"));
+  // Check if screen is between 900px and 1400px (use overlay instead of collapse)
+  const isOverlayRange = useMediaQuery("(min-width: 900px) and (max-width: 1400px)");
+
+  const handleDrawerToggle = () => onToggle(!open);
+
+  const drawerWidth = isMobile ? DRAWER_WIDTH : open ? DRAWER_WIDTH : COLLAPSED_WIDTH;
+
+  const drawerContent = (
+    <>
+<Toolbar
+  sx={{
+    minHeight: `${HEADER_HEIGHT}px`,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: open ? "space-between" : "center",
+    px: open ? 2 : 1,
+    borderBottom: `1px solid ${BORDER_COLOR}`,
+    transition: "all 0.3s ease-in-out",
+  }}
+>
+  {/* Logo Wrapper with both icons layered */}
+  <Box
+    sx={{
+      position: "relative",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      height: 40,
+      width: 160,
+      flexShrink: 0,
+      transition: "all 0.3s ease-in-out",
+    }}
+  >
+    {/* Full Logo */}
+    <Box
+      sx={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        width: "100%",
+        height: "100%",
+        opacity: open ? 1 : 0,
+        transform: open ? "scale(1)" : "scale(0.95)",
+        transition: "opacity 0.3s ease, transform 0.3s ease",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <Image
+        src="/medical-logo.png"
+        alt="Company Logo"
+        width={160}
+        height={40}
+        priority
+        quality={100}
+        style={{
+          width: "auto",
+          height: "100%",
+          objectFit: "contain",
+        }}
+      />
+    </Box>
+
+    {/* Mini Icon (always loaded, fades in/out) */}
+    <Box
+      sx={{
+        position: "absolute",
+        top: 0,
+        left: "50%",
+        transform: "translateX(-50%)",
+        width: 40,
+        height: 40,
+        opacity: open ? 0 : 1,
+        transition: "opacity 0.3s ease, transform 0.3s ease",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <Image
+        src="/medical-logo.png"
+        alt="App Icon"
+        width={40}
+        height={40}
+        priority
+        quality={100}
+        style={{
+          width: 40,
+          height: 40,
+          objectFit: "contain",
+        }}
+      />
+    </Box>
+  </Box>
+
+  {/* Collapse Button */}
+  {open && (
+    <IconButton
+      onClick={handleDrawerToggle}
+      sx={{
+        border: "1px solid #e4e5e7",
+        borderRadius: "8px",
+        transition: "transform 0.3s ease-in-out",
+        "&:hover": {
+          transform: "rotate(180deg)",
+        },
+      }}
+    >
+      <ArrowLeftFromLine size={16} />
+    </IconButton>
+  )}
+</Toolbar>
+
+
+      <List
+        sx={{
+          px: open ? 2 : 1,
+          py: 4,
+          transition: "all 0.3s ease-in-out",
+        }}
+      >
+        {navigationItems.map((item) => {
+          const selected = item.matchPaths
+            ? item.matchPaths.includes(pathname)
+            : pathname === item.path;
+          const isDisabled = item.disabled || false;
+
+          return (
+            <Tooltip
+              title={!open ? item.text : ""}
+              placement="right"
+              key={item.text}
+              arrow
+            >
+              <ListItemButton
+                onClick={() => !isDisabled && router.push(item.path)}
+                disabled={isDisabled}
+                sx={{
+                  borderRadius: "8px",
+                  mb: 0.5,
+                  backgroundColor: selected ? "#f2f2f2" : "transparent",
+                  opacity: isDisabled ? 0.5 : 1,
+                  cursor: isDisabled ? "not-allowed" : "pointer",
+                  "&:hover": {
+                    backgroundColor: isDisabled
+                      ? "transparent"
+                      : selected
+                      ? "#f2f2f2"
+                      : "#f7f7f7",
+                  },
+                  justifyContent: open ? "initial" : "center",
+                  px: open ? 2 : 0,
+                  transition: "all 0.3s ease-in-out",
+                }}
+              >
+                <ListItemIcon
+                  sx={{
+                    minWidth: 0,
+                    mr: open ? 2 : "auto",
+                    justifyContent: "center",
+                    "& svg": {
+                      fontSize: 20,
+                      color: isDisabled ? "#999" : "#000",
+                    },
+                    transition: "all 0.3s ease-in-out",
+                  }}
+                >
+                  {item.icon}
+                </ListItemIcon>
+
+                <ListItemText
+                  primary={item.text}
+                  sx={{
+                    opacity: open ? 1 : 0,
+                    visibility: open ? "visible" : "hidden",
+                    transition: "opacity 0.3s ease, visibility 0.3s ease",
+                    "& .MuiListItemText-primary": {
+                      fontWeight: selected ? 600 : 400,
+                      color: isDisabled ? "#999" : "#000",
+                      whiteSpace: "nowrap",
+                    },
+                  }}
+                />
+              </ListItemButton>
+            </Tooltip>
+          );
+        })}
+      </List>
+
+      <Box
+        sx={{
+          mt: "auto",
+          textAlign: "center",
+          py: 1.5,
+          transition: "all 0.3s ease",
+        }}
+      >
+        {open && (
+          <Typography variant="body2" color="textPrimary">
+            © {new Date().getFullYear()} – HFA Tools
+          </Typography>
+        )}
+      </Box>
+    </>
+  );
+
+  // Use temporary (overlay) variant for mobile or in the 900-1400px range
+  if (isMobile || isOverlayRange) {
+    return (
+      <Drawer
+        variant="temporary"
+        open={open}
+        onClose={handleDrawerToggle}
+        ModalProps={{ keepMounted: true }}
+        sx={{
+          "& .MuiDrawer-paper": {
+            width: DRAWER_WIDTH,
+            borderRight: `1px solid ${BORDER_COLOR}`,
+          },
+        }}
+      >
+        {drawerContent}
+      </Drawer>
+    );
+  }
+
+  // Use permanent variant for larger screens (above 1400px)
+  return (
+    <Drawer
+      variant="permanent"
+      sx={{
+        width: drawerWidth,
+        flexShrink: 0,
+        whiteSpace: "nowrap",
+        boxSizing: "border-box",
+        "& .MuiDrawer-paper": {
+          width: drawerWidth,
+          transition: theme.transitions.create("width", {
+            easing: theme.transitions.easing.sharp,
+            duration: theme.transitions.duration.standard,
+          }),
+          borderRight: `1px solid ${BORDER_COLOR}`,
+          overflowX: "hidden",
+        },
+      }}
+      open={open}
+    >
+      {drawerContent}
+    </Drawer>
+  );
+}

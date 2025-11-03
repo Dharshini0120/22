@@ -1,0 +1,637 @@
+"use client"
+import React, { useState, useEffect, useRef } from 'react'
+import {
+    Button,
+    Typography,
+    Box,
+    TextField,
+    Card,
+    CardContent,
+    Avatar,
+    InputAdornment
+} from '@mui/material'
+import { Global } from '@emotion/react'
+import {
+    Person as PersonIcon,
+    Email as EmailIcon,
+    Phone as PhoneIcon
+} from '@mui/icons-material'
+import DashboardLayout from '../../components/layout/DashboardLayout'
+import AdminProfileEditDialog from '../../components/AdminProfileEditDialog'
+import { useSelector, useDispatch } from 'react-redux'
+import { RootState, AppDispatch } from '../../store/store'
+import { getAdminUser } from '../../store/adminUserSlice'
+import { setCredentials } from '../../store/authSlice'
+import { withPageLoader } from "@frontend/shared-ui"
+import { toast } from 'react-toastify'
+import { useMutation } from '@apollo/client'
+import { UPLOAD_PROFILE_IMAGE_MUTATION, ADMIN_REMOVE_PROFILE_MUTATION } from '../../graphql/profileImage.service'
+
+function Settings() {
+    const dispatch = useDispatch<AppDispatch>();
+    const { userDetail } = useSelector((state: RootState) => state.adminUser);
+
+    const [formData, setFormData] = useState({
+        fullName: '',
+        email: '',
+        phoneNumber: '',
+    })
+
+    const [editDialogOpen, setEditDialogOpen] = useState(false)
+    const [profileImage, setProfileImage] = useState<string | null>(null)
+    const [imagePreview, setImagePreview] = useState<string | null>(null)
+    const [uploading, setUploading] = useState(false)
+    const fileInputRef = useRef<HTMLInputElement>(null)
+
+    // GraphQL mutation for uploading profile image
+    const [uploadProfileImage, { loading: uploadLoading }] = useMutation(UPLOAD_PROFILE_IMAGE_MUTATION)
+    
+    // GraphQL mutation for removing profile image
+    const [removeProfileImage, { loading: removeLoading }] = useMutation(ADMIN_REMOVE_PROFILE_MUTATION)
+
+    // Fetch admin user data if not present
+    useEffect(() => {
+        if (!userDetail || !userDetail.isAuthenticated || !userDetail.fullName) {
+            dispatch(getAdminUser());
+        }
+    }, [dispatch, userDetail]);
+
+    // Populate form with adminUser data
+    useEffect(() => {
+        if (userDetail) {
+            setFormData({
+                fullName: userDetail.fullName || '',
+                email: userDetail.email || '',
+                phoneNumber: userDetail.phoneNumber || '',
+            });
+        }
+    }, [userDetail]);
+
+
+    const handleUpdateProfile = () => {
+        setEditDialogOpen(true)
+    }
+
+    const handleUpdateProfileData = (updatedData: {
+        fullName: string;
+        email: string;
+        phoneNumber: string;
+    }) => {
+        setFormData(updatedData)
+        
+        // Update auth slice to reflect changes in header immediately
+        const currentAuthUser = userDetail;
+        if (currentAuthUser) {
+            dispatch(setCredentials({
+                token: sessionStorage.getItem('admin_portal_token') || '',
+                user: {
+                    id: currentAuthUser._id || '',
+                    fullName: updatedData.fullName,
+                    email: updatedData.email,
+                    role: currentAuthUser.role || 'admin',
+                    profileUrl: currentAuthUser.profileUrl
+                }
+            }));
+        }
+        
+        console.log('Profile updated:', updatedData)
+    }
+
+    // Image upload functions
+    const validateImageFile = (file: File): boolean => {
+        const allowedTypes = ['image/png', 'image/jpg', 'image/jpeg']
+        const allowedExtensions = ['.png', '.jpg', '.jpeg']
+        const maxSize = 5 * 1024 * 1024 // 5MB
+
+        // Check file type
+        if (!allowedTypes.includes(file.type)) {
+            toast.error('Please select a valid image file (PNG, JPG, JPEG)')
+            return false
+        }
+
+        // Check file extension
+        const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'))
+        if (!allowedExtensions.includes(fileExtension)) {
+            toast.error('Please select a valid image file with .png, .jpg, or .jpeg extension')
+            return false
+        }
+
+        if (file.size > maxSize) {
+            toast.error('Image size should be less than 5MB')
+            return false
+        }
+
+        return true
+    }
+    const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0]
+        if (!file) return
+
+        console.log('📁 Selected file:', {
+            name: file.name,
+            size: file.size,
+            type: file.type,
+            lastModified: file.lastModified
+        })
+
+        if (!validateImageFile(file)) {
+            // Clear the file input so the same file can be selected again
+            if (fileInputRef.current) {
+                fileInputRef.current.value = ''
+            }
+            return
+        }
+
+        setUploading(true)
+
+        try {
+            // Convert file to base64
+            const base64String = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader()
+                reader.onload = () => {
+                    const result = reader.result as string
+                    // Remove the data URL prefix to get just the base64 string
+                    const base64 = result.split(',')[1]
+                    resolve(base64)
+                }
+                reader.onerror = reject
+                reader.readAsDataURL(file)
+            })
+
+            console.log('🖼️ Uploading image to server...')
+            console.log('📄 File name:', file.name)
+            console.log('📏 File size:', `${(file.size / 1024 / 1024).toFixed(2)} MB`)
+            console.log('🔗 Base64 data length:', base64String.length)
+
+            // Upload to server
+            const result = await uploadProfileImage({
+                variables: {
+                    input: {
+                        fileName: file.name,
+                        mimeType: file.type,
+                        fileBuffer: base64String
+                    }
+                }
+            })
+
+            const response = result.data?.adminuploadProfileImage
+
+            if (response?.status === 'success') {
+                console.log('✅ Image uploaded successfully!')
+                console.log('🔗 Profile URL:', response.data?.profileUrl)
+                
+                // Set the preview to the uploaded image URL
+                setImagePreview(response.data?.profileUrl || null)
+                setProfileImage(response.data?.profileUrl || null)
+                
+                toast.success('Profile image uploaded successfully!')
+                
+                // Refresh admin user data to get updated profile
+                await dispatch(getAdminUser())
+                
+                // Update auth slice to reflect profile image change in header immediately
+                const currentAuthUser = userDetail;
+                if (currentAuthUser) {
+                    dispatch(setCredentials({
+                        token: sessionStorage.getItem('admin_portal_token') || '',
+                        user: {
+                            id: currentAuthUser._id || '',
+                            fullName: currentAuthUser.fullName || '',
+                            email: currentAuthUser.email || '',
+                            role: currentAuthUser.role || 'admin',
+                            profileUrl: response.data?.profileUrl
+                        }
+                    }));
+                }
+            } else {
+                throw new Error(response?.message || 'Failed to upload image')
+            }
+        } catch (error: unknown) {
+            console.error('❌ Image upload failed:', error)
+            const errorMessage = (error as { graphQLErrors?: Array<{ message: string }>; message?: string })?.graphQLErrors?.[0]?.message || 
+                              (error as { message?: string })?.message || 
+                              'Failed to upload image. Please try again.'
+            toast.error(errorMessage)
+        } finally {
+            setUploading(false)
+            // Clear the file input
+            if (fileInputRef.current) {
+                fileInputRef.current.value = ''
+            }
+        }
+    }
+
+    const handleChangePhoto = () => {
+        fileInputRef.current?.click()
+    }
+
+    const handleRemovePhoto = async () => {
+        // Only proceed if there's actually an image to remove
+        if (!profileImage && !imagePreview && !userDetail?.profileUrl) {
+            toast.info('No profile image to remove')
+            return
+        }
+
+        try {
+            const result = await removeProfileImage()
+            const response = result.data?.adminremoveProfile
+
+            if (response?.status === 'success') {
+                // Clear local state
+                setProfileImage(null)
+                setImagePreview(null)
+                if (fileInputRef.current) {
+                    fileInputRef.current.value = ''
+                }
+                
+                toast.success('Profile image removed successfully!')
+                
+                // Refresh admin user data to get updated profile
+                await dispatch(getAdminUser())
+                
+                // Update auth slice to reflect profile image removal in header immediately
+                const currentAuthUser = userDetail;
+                if (currentAuthUser) {
+                    dispatch(setCredentials({
+                        token: sessionStorage.getItem('admin_portal_token') || '',
+                        user: {
+                            id: currentAuthUser._id || '',
+                            fullName: currentAuthUser.fullName || '',
+                            email: currentAuthUser.email || '',
+                            role: currentAuthUser.role || 'admin',
+                            profileUrl: null // Remove profile URL
+                        }
+                    }));
+                }
+            } else {
+                throw new Error(response?.message || 'Failed to remove profile image')
+            }
+        } catch (error: unknown) {
+            console.error('❌ Profile image removal failed:', error)
+            const errorMessage = (error as { graphQLErrors?: Array<{ message: string }>; message?: string })?.graphQLErrors?.[0]?.message || 
+                              (error as { message?: string })?.message || 
+                              'Failed to remove profile image. Please try again.'
+            toast.error(errorMessage)
+        }
+    }
+
+    // Get first letter of full name for default avatar
+    const getInitials = (name: string): string => {
+        return name ? name.charAt(0).toUpperCase() : 'A'
+    }
+
+    return (
+        <DashboardLayout>
+            <Global
+                styles={{
+                    '.MuiContainer-root': {
+                        paddingLeft: '8px !important',
+                        paddingRight: '8px !important',
+                    },
+                }}
+            />
+            <Box
+  sx={{
+    width: '100%',
+    maxWidth: '100%',
+    overflowX: 'hidden',
+    p: { xs: 1.5, sm: 3 },
+  }}
+>
+                {/* Header */}
+                <Box sx={{ pb: 3, display: 'flex', justifyContent: 'space-between', alignItems: { xs: 'stretch', sm: 'flex-start' }, flexDirection: { xs: 'column', sm: 'row' }, gap: { xs: 2, sm: 0 } }}>
+                    <Box>
+                    <Typography variant="h5" fontWeight={600} fontFamily={'var(--font-inter), sans-serif'}>
+                        Account Settings
+                    </Typography>
+                    <Typography variant="subtitle1" color="#6c757d" fontFamily={'var(--font-inter), sans-serif'}>
+                            Manage your personal information
+                                </Typography>
+                            </Box>
+                                <Button
+                                    variant="contained"
+                        onClick={handleUpdateProfile}
+                                    sx={{
+                            backgroundColor: '#4285F4',
+                            color: 'white',
+                            borderRadius: '8px',
+                            px: 3,
+                            py: 1.5,
+                                        textTransform: 'none',
+                            fontSize: '0.95rem',
+                                        fontWeight: 500,
+                            '&:hover': {
+                                backgroundColor: '#3a7de6'
+                            },
+                            boxShadow: '0 2px 8px rgba(64, 139, 255, 0.3)'
+                                    }}
+                                >
+                                    Update Profile
+                                </Button>
+                </Box>
+
+                {/* Profile Picture Section */}
+                    <Card
+                                    sx={{
+                            borderRadius: '12px',
+                            border: '1px solid #e4e5e7',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+                        mb: 3
+                    }}
+                >
+                    <CardContent sx={{ p: { xs: 2, sm: 3, md: 4 } }}>
+                        <Box sx={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: { xs: 2, sm: 3 },
+                            flexDirection: { xs: 'column', sm: 'row' }
+                        }}>
+                            {/* Avatar */}
+                            <Avatar
+                                src={imagePreview || profileImage || userDetail?.profileUrl || undefined}
+                                sx={{
+                                    width: { xs: 100, sm: 110, md: 120 },
+                                    height: { xs: 100, sm: 110, md: 120 },
+                                    borderRadius: '12px',
+                                    backgroundColor: '#4285F4',
+                                    fontSize: { xs: '2rem', sm: '2.25rem', md: '2.5rem' },
+                                    fontWeight: 600,
+                                    flexShrink: 0
+                                }}
+                            >
+                                {!imagePreview && !profileImage && !userDetail?.profileUrl && getInitials(formData.fullName)}
+                            </Avatar>
+
+                            {/* Profile Picture Info */}
+                            <Box sx={{ flex: 1 }}>
+                                <Typography
+                                    variant="h6"
+                                    fontWeight={600}
+                                    fontFamily={'var(--font-inter), sans-serif'}
+                                    sx={{ mb: 1, color: '#1a1a1a' }}
+                                >
+                                    Profile Picture
+                                </Typography>
+                                <Typography
+                                    variant="body2"
+                                    color="#6b7280"
+                                    fontFamily={'var(--font-inter), sans-serif'}
+                                    sx={{ mb: 2 }}
+                                >
+                                    Upload a new profile picture or avatar
+                                </Typography>
+                                
+                                {/* Action Buttons */}
+                                <Box sx={{ display: 'flex', gap: 2, flexDirection: { xs: 'column', sm: 'row' } }}>
+                                    <Button
+                                        variant="outlined"
+                                        onClick={handleChangePhoto}
+                                        disabled={uploading || uploadLoading}
+                                        sx={{
+                                            borderColor: '#d1d5db',
+                                            color: '#374151',
+                                            textTransform: 'none',
+                                            borderRadius: '8px',
+                                            whiteSpace: 'nowrap',
+                                            px: 3,
+                                            py: 1,
+                                            '&:hover': {
+                                                borderColor: '#9ca3af',
+                                                backgroundColor: '#f9fafb'
+                                            },
+                                            '&:disabled': {
+                                                borderColor: '#e5e7eb',
+                                                color: '#9ca3af',
+                                                backgroundColor: '#f9fafb'
+                                            }
+                                        }}
+                                    >
+                                        {uploading || uploadLoading ? 'Uploading...' : 'Upload New Picture'}
+                                    </Button>
+                                    <Button
+                                        variant="outlined"
+                                        onClick={handleRemovePhoto}
+                                        disabled={uploading || uploadLoading || removeLoading}
+                                        sx={{
+                                            borderColor: '#fca5a5',
+                                            color: '#dc2626',
+                                            textTransform: 'none',
+                                            borderRadius: '8px',
+                                            whiteSpace: 'nowrap',
+                                            px: 3,
+                                            py: 1,
+                                            '&:hover': {
+                                                borderColor: '#f87171',
+                                                backgroundColor: '#fef2f2'
+                                            },
+                                            '&:disabled': {
+                                                borderColor: '#fecaca',
+                                                color: '#fca5a5',
+                                                backgroundColor: '#fef2f2'
+                                            }
+                                        }}
+                                    >
+                                        {removeLoading ? 'Removing...' : 'Remove'}
+                                    </Button>
+                                </Box>
+                            </Box>
+                        </Box>
+                    </CardContent>
+                </Card>
+
+                {/* Personal Information Section */}
+                <Card
+                    sx={{
+                        borderRadius: '12px',
+                        border: '1px solid #e4e5e7',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+                    }}
+                >
+                    <CardContent sx={{ p: 4 }}>
+                            <Typography
+                                variant="h6"
+                                fontWeight={600}
+                                fontFamily={'var(--font-inter), sans-serif'}
+                            sx={{ mb: 1, color: '#1a1a1a' }}
+                            >
+                                Personal Information
+                            </Typography>
+                        <Typography
+                            variant="body2"
+                            color="#6b7280"
+                            fontFamily={'var(--font-inter), sans-serif'}
+                            sx={{ mb: 3 }}
+                        >
+                            Update your personal details and contact information
+                            </Typography>
+
+                        {/* Form Fields - Horizontal Layout */}
+                        <Box
+  sx={{
+    display: 'flex',
+    gap: 3,
+    flexWrap: 'wrap',
+    flexDirection: { xs: 'column', md: 'row' },
+  }}
+>
+
+                                        {/* Full Name */}
+                            <Box sx={{ flex: 1, minWidth: '300px' }}>
+                                    <TextField
+                                            name="fullName"
+                                            value={formData.fullName}
+                                            label="Full Name"
+                                        fullWidth
+                                        InputProps={{
+                                                readOnly: true,
+                                                startAdornment: (
+                                                    <InputAdornment position="start" sx={{ pr: 0.5 }}>
+                                                        <PersonIcon sx={{ color: '#9ca3af', fontSize: '20px' }} />
+                                                        <Box sx={{ height: 28, width: 1.3, bgcolor: '#b0b0b0', ml: 1 }} />
+                                                </InputAdornment>
+                                                ),
+                                            }}
+                                            InputLabelProps={{
+                                                shrink: true,
+                                                sx: {
+                                                    fontSize: '0.95rem',
+                                                    color: '#9ca3af',
+                                                    '&.Mui-focused': { color: '#9ca3af' },
+                                                    transform: 'translate(14px, 16px) scale(1)',
+                                                    '&.MuiInputLabel-shrink': {
+                                                        transform: 'translate(14px, -8px) scale(0.85)',
+                                                        backgroundColor: '#fff',
+                                                        px: 0.5,
+                                                    },
+                                                },
+                                            }}
+                                sx={{
+                                                '& .MuiOutlinedInput-root': {
+                                                    borderRadius: '12px',
+                                                    backgroundColor: '#fff',
+                                                    fontSize: '1rem',
+                                                    minHeight: '56px',
+                                                    '& fieldset': { borderColor: '#a8a8a8' },
+                                                    '&:hover fieldset': { borderColor: '#808080' },
+                                                    '&.Mui-focused fieldset': { borderColor: '#4285F4' },
+                                                },
+                                                '& .MuiOutlinedInput-input': { padding: '14px 10px' },
+                                            }}
+                                        />
+                            </Box>
+
+                                        {/* Email Address */}
+                            <Box sx={{ flex: 1, minWidth: '300px' }}>
+                                    <TextField
+                                        name="email"
+                                        value={formData.email}
+                                    label="Email address"
+                                        fullWidth
+                                        InputProps={{
+                                                readOnly: true,
+                                                startAdornment: (
+                                                    <InputAdornment position="start" sx={{ pr: 0.5 }}>
+                                                        <EmailIcon sx={{ color: '#9ca3af', fontSize: '20px' }} />
+                                                        <Box sx={{ height: 28, width: 1.3, bgcolor: '#b0b0b0', ml: 1 }} />
+                                                </InputAdornment>
+                                                ),
+                                            }}
+                                            InputLabelProps={{
+                                                shrink: true,
+                                                sx: {
+                                                    fontSize: '0.95rem',
+                                                    color: '#9ca3af',
+                                                    '&.Mui-focused': { color: '#9ca3af' },
+                                                    transform: 'translate(14px, 16px) scale(1)',
+                                                    '&.MuiInputLabel-shrink': {
+                                                        transform: 'translate(14px, -8px) scale(0.85)',
+                                                        backgroundColor: '#fff',
+                                                        px: 0.5,
+                                                    },
+                                                },
+                                            }}
+                                            sx={{
+                                                '& .MuiOutlinedInput-root': {
+                                                    borderRadius: '12px',
+                                                    backgroundColor: '#fff',
+                                                    fontSize: '1rem',
+                                                    minHeight: '56px',
+                                                    '& fieldset': { borderColor: '#a8a8a8' },
+                                                    '&:hover fieldset': { borderColor: '#808080' },
+                                                    '&.Mui-focused fieldset': { borderColor: '#4285F4' },
+                                                },
+                                                '& .MuiOutlinedInput-input': { padding: '14px 10px' },
+                                            }}
+                                        />
+                            </Box>
+
+                                        {/* Phone Number */}
+                            <Box sx={{ flex: 1, minWidth: '300px' }}>
+                                    <TextField
+                                        name="phoneNumber"
+                                        value={formData.phoneNumber}
+                                            label="Phone Number"
+                                        fullWidth
+                                        InputProps={{
+                                                readOnly: true,
+                                                startAdornment: (
+                                                    <InputAdornment position="start" sx={{ pr: 0.5 }}>
+                                                        <PhoneIcon sx={{ color: '#9ca3af', fontSize: '20px' }} />
+                                                        <Box sx={{ height: 28, width: 1.3, bgcolor: '#b0b0b0', ml: 1 }} />
+                                                </InputAdornment>
+                                                ),
+                                            }}
+                                            InputLabelProps={{
+                                                shrink: true,
+                                                sx: {
+                                                    fontSize: '0.95rem',
+                                                    color: '#9ca3af',
+                                                    '&.Mui-focused': { color: '#9ca3af' },
+                                                    transform: 'translate(14px, 16px) scale(1)',
+                                                    '&.MuiInputLabel-shrink': {
+                                                        transform: 'translate(14px, -8px) scale(0.85)',
+                                                        backgroundColor: '#fff',
+                                                        px: 0.5,
+                                                    },
+                                                },
+                                            }}
+                                    sx={{
+                                                '& .MuiOutlinedInput-root': {
+                                                    borderRadius: '12px',
+                                                    backgroundColor: '#fff',
+                                                    fontSize: '1rem',
+                                                    minHeight: '56px',
+                                                    '& fieldset': { borderColor: '#a8a8a8' },
+                                                    '&:hover fieldset': { borderColor: '#808080' },
+                                                    '&.Mui-focused fieldset': { borderColor: '#4285F4' },
+                                                },
+                                                '& .MuiOutlinedInput-input': { padding: '14px 10px' },
+                                            }}
+                                        />
+                            </Box>
+                        </Box>
+                        </CardContent>
+                    </Card>
+
+                {/* Hidden File Input */}
+                <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleImageUpload}
+                    accept=".png,.jpg,.jpeg,image/png,image/jpg,image/jpeg"
+                    style={{ display: 'none' }}
+                />
+
+                {/* Admin Profile Edit Dialog */}
+                <AdminProfileEditDialog
+                    open={editDialogOpen}
+                    onClose={() => setEditDialogOpen(false)}
+                    currentData={formData}
+                    onUpdate={handleUpdateProfileData}
+                />
+            </Box>
+        </DashboardLayout>
+    )
+}
+
+export default withPageLoader(Settings);

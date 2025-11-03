@@ -1,0 +1,478 @@
+'use client';
+import React, { useState, useMemo } from 'react';
+import {
+    Box,
+    Typography,
+    Button,
+    Table,
+    TableBody,
+    TableCell,
+    TableContainer,
+    TableHead,
+    TableRow,
+    IconButton,
+    CircularProgress,
+    FormControl,
+    InputLabel,
+    Select,
+    MenuItem,
+    Grid
+} from '@mui/material';
+import { Global } from '@emotion/react';
+import { AddOutlined, RemoveRedEyeOutlined, Delete } from '@mui/icons-material';
+import NotificationsIcon from '@mui/icons-material/Notifications';
+import PdfLockIcon from '../../components/assessment/PdfLockIcon';
+import { useRouter } from 'next/navigation';
+import { useQuery, useMutation } from '@apollo/client';
+import DashboardLayout from '../../components/layout/DashboardLayout';
+import { withPageLoader, CustomPagination } from "@frontend/shared-ui";
+import { LIST_ALL_ASSESSMENTS_QUERY } from '../../graphql/queries/assessment';
+// import { GET_BY_ROLE } from '../../graphql/queries/role';
+import { useSelector } from 'react-redux';
+import { RootState } from '../../store/store';
+import { SEND_NOTIFICATION } from '../../graphql/mutations/notification';
+import { toast } from 'react-toastify';
+
+const statusStyles: Record<string, React.CSSProperties> = {
+    'IN_PROGRESS': {
+        backgroundColor: '#fff3cd',
+        color: '#d8a714ff',
+        fontWeight: 600,
+        borderRadius: '4px',
+        padding: '4px 8px',
+        width: '120px',
+        textAlign: 'center',
+    },
+    'COMPLETED': {
+        backgroundColor: '#d4edda',
+        fontWeight: 600,
+        borderRadius: '4px',
+        padding: '4px 8px',
+        width: '120px',
+        textAlign: 'center',
+        color: '#18cf43ff',
+    },
+};
+
+type RoleModule = {
+    name: string;
+    permissions?: { create?: boolean; update?: boolean; delete?: boolean };
+};
+
+type AssessmentListItem = {
+    _id: string;
+    sectionName: string;
+    startedDate: string;
+    completedBy?: string | null;
+    userId: string;
+    overallProgress: { status: 'IN_PROGRESS' | 'COMPLETED' };
+    isUnlocked: boolean;
+};
+
+const Assessments = () => {
+    const [status, setStatus] = useState('');
+    const [allTime, setAllTime] = useState('');
+    const [sortOrder, setSortOrder] = useState('');
+    const [currentPage, setCurrentPage] = useState(1);
+    const [rowsPerPage, setRowsPerPage] = useState(10);
+    const router = useRouter();
+    const [sendNotification] = useMutation(SEND_NOTIFICATION);
+        
+ const handleTimeChange = (newTime: string) => {
+        setAllTime(newTime);
+        setCurrentPage(1);
+    };
+
+    const handleSortChange = (newSort: string) => {
+        setSortOrder(newSort);
+        setCurrentPage(1);
+    };
+
+    const handleStatusChange = (newStatus: string) => {
+        setStatus(newStatus);
+        setCurrentPage(1);
+    };
+    // Get role data from Redux store instead of API call
+    const roleData = useSelector((state: RootState) => state.role.roleData);
+    const roleLoading = useSelector((state: RootState) => state.role.loading);
+
+    console.log('🔍 Assessment page - Role data from Redux:', roleData);
+
+    // Fetch assessments
+    const { data, loading, error } = useQuery(LIST_ALL_ASSESSMENTS_QUERY, {
+        variables: {
+            page: currentPage,
+            limit: rowsPerPage
+        },
+        fetchPolicy: 'cache-and-network'
+    });
+
+    const assessments = data?.listAllAssessments?.assessments || [];
+    const pagination = data?.listAllAssessments?.pagination || {};
+
+    // Calculate permissions based on role data from Redux
+    const permissions = useMemo(() => {
+        if (!roleData) {
+            console.log('❌ No role data available in Redux');
+            return { canCreate: false, canUpdate: false, canDelete: false, isAdmin: false };
+        }
+
+        const roleName = roleData.roleName?.toLowerCase();
+        const isAdmin = roleName === 'admin' || roleName === 'super admin';
+
+        console.log('🔍 Role info:', { roleName, isAdmin });
+
+        // Find Assessment List module (matching "Assessment Records")
+        const assessmentModule = roleData.modules?.find((module: RoleModule) => 
+            module.name === 'Assessment Records'
+        );
+
+        console.log('🔍 Assessment module found:', assessmentModule);
+
+        if (!assessmentModule) {
+            console.log('❌ No assessment module found for role');
+            return { canCreate: false, canUpdate: false, canDelete: false, isAdmin };
+        }
+
+        const permissions = {
+            canCreate: assessmentModule.permissions?.create || false,
+            canUpdate: assessmentModule.permissions?.update || false,
+            canDelete: assessmentModule.permissions?.delete || false,
+            isAdmin
+        };
+
+        console.log('✅ Calculated permissions:', permissions);
+        return permissions;
+    }, [roleData]);
+
+    const handlePageChange = (page: number) => {
+        setCurrentPage(page);
+    };
+
+    const handleRowsPerPageChange = (newRowsPerPage: number) => {
+        setRowsPerPage(newRowsPerPage);
+        setCurrentPage(1);
+    };
+
+    // Edit action intentionally disabled for IN_PROGRESS items
+
+    const handleViewAssessment = (assessmentId: string) => {
+        router.push(`/assessment/view/${assessmentId}`);
+    };
+
+    const handleDeleteAssessment = (assessmentId: string) => {
+        // Add delete logic here
+        console.log('Delete assessment:', assessmentId);
+    };
+
+    const handleSendReminder = async (userId: string, assessmentId: string) => {
+        try {
+            const { data } = await sendNotification({ variables: { userId, assessmentId } });
+            const message = data?.sendNotification?.message || 'Notification sent successfully';
+            toast.success(message);
+        } catch (err) {
+            toast.error('Failed to send reminder');
+            console.error(err);
+        }
+    };
+
+    const formatDate = (dateString: string) => {
+        return new Date(dateString).toLocaleDateString('en-US', { 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric' 
+        });
+    };
+
+    const getStatusDisplayText = (status: string) => {
+        return status === 'IN_PROGRESS' ? 'In Progress' : 'Completed';
+    };
+
+    // Determine which action to show based on permissions and role
+    const getActionButton = (assessment: AssessmentListItem) => {
+        if (assessment.overallProgress.status === 'COMPLETED') {
+            return (
+                <>
+                    <IconButton onClick={() => handleViewAssessment(assessment._id)}>
+                        <RemoveRedEyeOutlined style={{ fontSize: '25px', color: '#408bff' }} />
+                    </IconButton>
+                    <IconButton>
+                        <PdfLockIcon 
+                            isUnlocked={assessment.isUnlocked}
+                            size={25}
+                            tooltipText={assessment.isUnlocked ? "Paid Report" : "Unpaid Report"}
+                        />
+                    </IconButton>
+                </>
+            );
+        }
+
+        // For IN_PROGRESS assessments
+        if (permissions.isAdmin && permissions.canDelete && !permissions.canUpdate) {
+            // Admin/SuperAdmin with delete permission but no update permission
+            return (
+                <>
+                    <IconButton onClick={() => handleDeleteAssessment(assessment._id)}>
+                        <Delete style={{ fontSize: '25px', color: '#e53935' }} />
+                    </IconButton>
+                </>
+            );
+        }
+
+        return null;
+    };
+
+    if (roleLoading) {
+        return (
+            <DashboardLayout>
+                <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+                    <CircularProgress size={40} />
+                </Box>
+            </DashboardLayout>
+        );
+    }
+
+    return (
+        <DashboardLayout>
+            <Global
+                styles={{
+                    '.MuiTable-root': {
+                        minWidth: '900px', // ✅ ensures the table scrolls on small screens
+                    },
+                    '.MuiContainer-root, .MuiBox-root': {
+                        maxWidth: '100% !important',
+                    },
+                }}
+            />
+            <Box>
+                <Box  sx={{
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: { xs: 'flex-start', sm: 'center' },
+    flexDirection: { xs: 'column', sm: 'row' },
+    gap: 2,
+    mb: 3,
+  }}>
+                    <Box>
+                        <Typography variant="h5" fontWeight={600} fontFamily={'var(--font-inter), sans-serif'}>
+                            Assessment Records
+                        </Typography>
+                        <Typography variant="subtitle1" color="#6c757d" fontFamily={'var(--font-inter), sans-serif'}>
+                            View and manage all assessments for City General Hospital
+                        </Typography>
+                    </Box>
+                    {/* {permissions.canCreate && !permissions.isAdmin && ( */}
+                        <Button
+                            onClick={() => router.push('/assessment/form')}
+                            variant="contained"
+                            size='large'
+                            sx={{
+                                background: 'linear-gradient(90deg, #408bff 0%, #3a7de6 100%)',
+                                textTransform: 'none',
+                                letterSpacing: '0.5px',
+                                fontWeight: 500,
+                                fontFamily: 'var(--font-inter), sans-serif',
+                                borderRadius: '4px',
+                                whiteSpace: 'nowrap',
+                                padding: '8px 24px',
+                                boxShadow: '0 2px 8px rgba(64, 139, 255, 0.25)',
+                                border: 'none',
+                                '&:hover': {
+                                    background: 'linear-gradient(90deg, #3a7de6 0%, #3670cc 100%)',
+                                    boxShadow: '0 4px 12px rgba(64, 139, 255, 0.3)',
+                                }
+                            }}
+                        >
+                            <AddOutlined /> &nbsp; New Assessment
+                        </Button>
+                    
+                </Box>
+
+                <Box
+  sx={{
+    border: '1px solid #e4e5e7',
+    borderRadius: '10px',
+    p: { xs: 2, sm: 3 },
+    backgroundColor: '#fff',
+    width: '100%',
+    maxWidth:'100% ',
+    mx: 'auto',  
+    overflow: 'hidden',
+    boxSizing: 'border-box',
+  }}
+>
+  {/* Filter section */}
+  <Grid
+    container
+    spacing={2}
+    sx={{
+      mb: 2,
+      display: 'flex',
+      flexDirection: { xs: 'column', sm: 'row' },
+      justifyContent: 'flex-start',
+      alignItems: { xs: 'stretch', sm: 'center' },
+      flexWrap: 'wrap',
+      gap: { xs: 2, sm: 2 },
+    }}
+  >
+    <Grid item xs={12} sm="auto">
+      <FormControl fullWidth sx={{ minWidth: { sm: 230 } }}>
+        <InputLabel>Status</InputLabel>
+        <Select
+          value={status}
+          label="Status"
+          onChange={(e) => handleStatusChange(e.target.value)}
+          sx={{ borderRadius: '12px', height: '50px' }}
+        >
+          <MenuItem value="">All Statuses</MenuItem>
+          <MenuItem value="IN_PROGRESS_OR_BLOCKED">In Progress</MenuItem>
+          <MenuItem value="COMPLETED">Completed</MenuItem>
+        </Select>
+      </FormControl>
+    </Grid>
+
+    <Grid item xs={12} sm="auto">
+      <FormControl fullWidth sx={{ minWidth: { sm: 230 } }}>
+        <InputLabel>All Time</InputLabel>
+        <Select
+          value={allTime}
+          label="All Time"
+          onChange={(e) => handleTimeChange(e.target.value)}
+          sx={{ borderRadius: '12px', height: '50px' }}
+        >
+          <MenuItem value="">All Time</MenuItem>
+          <MenuItem value="Last 30 Days">Last 30 Days</MenuItem>
+        </Select>
+      </FormControl>
+    </Grid>
+
+    <Grid item xs={12} sm="auto">
+      <FormControl fullWidth sx={{ minWidth: { sm: 230 } }}>
+        <InputLabel>Most Recent</InputLabel>
+        <Select
+          value={sortOrder}
+          label="Most Recent"
+          onChange={(e) => handleSortChange(e.target.value)}
+          sx={{ borderRadius: '12px', height: '50px' }}
+        >
+          <MenuItem value="">Most Recent</MenuItem>
+          <MenuItem value="Oldest">Oldest</MenuItem>
+        </Select>
+      </FormControl>
+    </Grid>
+  </Grid>
+
+  {/* Table section with scrollable container */}
+  <TableContainer
+    sx={{
+      mt: 2,
+      borderRadius: '12px',
+      overflow: 'auto',
+    // overflowX: 'auto',
+    // overflowY: 'auto',
+      minHeight: '500px',
+      height: '500px',
+      maxHeight: '600px',
+      width: '100%',
+      boxSizing: 'border-box',
+      display: 'block',
+      '& table': {
+        minWidth: { xs: 650, sm: 800, md: 1000 }, // ✅ dynamic scroll threshold
+      },
+      border: '1px solid #e0e0e0',
+      '&::-webkit-scrollbar': {
+        height: '8px',
+        width: '8px',
+      },
+      '&::-webkit-scrollbar-track': {
+        backgroundColor: '#f1f1f1',
+        borderRadius: '4px',
+      },
+      '&::-webkit-scrollbar-thumb': {
+        backgroundColor: '#c1c1c1',
+        borderRadius: '4px',
+        '&:hover': {
+          backgroundColor: '#a8a8a8',
+        },
+      },
+    }}
+  >
+    <Table stickyHeader>
+                            <TableHead sx={{ backgroundColor: '#f5f9ff' }}>
+                                <TableRow>
+                                    <TableCell sx={{ whiteSpace: 'nowrap', backgroundColor: '#f5f9ff' }}><strong>Assessment Date</strong></TableCell>
+                                    <TableCell sx={{ whiteSpace: 'nowrap', backgroundColor: '#f5f9ff' }}><strong>Assessment Name</strong></TableCell>
+                                    <TableCell sx={{ whiteSpace: 'nowrap', backgroundColor: '#f5f9ff' }}><strong>Status</strong></TableCell>
+                                    <TableCell sx={{ whiteSpace: 'nowrap', backgroundColor: '#f5f9ff' }}><strong>Completed By</strong></TableCell>
+                                    <TableCell sx={{ whiteSpace: 'nowrap', backgroundColor: '#f5f9ff' }}><strong>Actions</strong></TableCell>
+                                </TableRow>
+                            </TableHead>
+                            <TableBody>
+                                {loading ? (
+                                    <TableRow>
+                                        <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
+                                            <CircularProgress size={40} />
+                                        </TableCell>
+                                    </TableRow>
+                                ) : error ? (
+                                    <TableRow>
+                                        <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
+                                            <Typography variant="h6" color="#6c757d" fontWeight={600}>
+                                                Error loading assessments
+                                            </Typography>
+                                        </TableCell>
+                                    </TableRow>
+                                ) : assessments.length === 0 ? (
+                                    <TableRow>
+                                        <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
+                                            <Typography variant="h6" color="#6c757d" fontWeight={600}>
+                                                No Record Found
+                                            </Typography>
+                                        </TableCell>
+                                    </TableRow>
+                                ) : (
+                                    assessments.map((assessment: AssessmentListItem) => (
+                                        <TableRow key={assessment._id}>
+                                            <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatDate(assessment.startedDate)}</TableCell>
+                                            <TableCell sx={{ whiteSpace: 'nowrap' }}>{assessment.sectionName}</TableCell>
+                                            <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                                                <Box sx={statusStyles[assessment.overallProgress.status]}>
+                                                    {getStatusDisplayText(assessment.overallProgress.status)}
+                                                </Box>
+                                            </TableCell>
+                                            <TableCell sx={{ whiteSpace: 'nowrap' }}>{assessment.completedBy || '-'}</TableCell>
+                                            <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                                                {getActionButton(assessment)}
+                                                <IconButton onClick={() => handleSendReminder(assessment.userId, assessment._id)}>
+                                                    <NotificationsIcon style={{ fontSize: '25px', color: '#408bff' }} />
+                                                </IconButton>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))
+                                )}
+                            </TableBody>
+                        </Table>
+
+  </TableContainer>
+
+  <CustomPagination
+    currentPage={pagination.page || 1}
+    totalPages={pagination.totalPages || 0}
+    rowsPerPage={rowsPerPage}
+    totalItems={pagination.total || 0}
+    onPageChange={handlePageChange}
+    onRowsPerPageChange={handleRowsPerPageChange}
+    rowsPerPageOptions={[5, 10, 20, 50]}
+  />
+</Box>
+
+
+            </Box>
+        </DashboardLayout>
+    );
+};
+
+export default withPageLoader(Assessments);
+
+
+

@@ -1,0 +1,238 @@
+import React from "react";
+import {
+  Box,
+  Typography,
+  Select,
+  MenuItem,
+  IconButton,
+  useMediaQuery,
+  useTheme,
+} from "@mui/material";
+import {
+  FirstPage as FirstPageIcon,
+  LastPage as LastPageIcon,
+  ChevronLeft as ChevronLeftIcon,
+  ChevronRight as ChevronRightIcon,
+} from "@mui/icons-material";
+
+interface CustomPaginationProps {
+  currentPage: number;
+  totalPages: number;
+  rowsPerPage: number;
+  totalItems: number;
+  onPageChange: (page: number) => void;
+  onRowsPerPageChange: (rowsPerPage: number) => void;
+  rowsPerPageOptions?: number[];
+}
+
+const CustomPagination: React.FC<CustomPaginationProps> = ({
+  currentPage,
+  totalPages,
+  rowsPerPage,
+  totalItems,
+  onPageChange,
+  onRowsPerPageChange,
+  rowsPerPageOptions = [5, 10, 20],
+}) => {
+  const theme = useTheme();
+  const isSmallScreen = useMediaQuery(theme.breakpoints.down("sm"));
+
+  const startItem =
+    totalItems === 0 ? 0 : (currentPage - 1) * rowsPerPage + 1;
+  const endItem =
+    totalItems === 0 ? 0 : Math.min(currentPage * rowsPerPage, totalItems);
+
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: isSmallScreen ? "column" : "row",
+        justifyContent: isSmallScreen ? "center" : "space-between",
+        alignItems: isSmallScreen ? "center" : "center",
+        gap: isSmallScreen ? 2 : 0,
+        mt: 3,
+        width: "100%",
+        textAlign: isSmallScreen ? "center" : "left",
+      }}
+    >
+      {/* Rows per page */}
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: isSmallScreen ? "center" : "flex-start",
+          gap: 1,
+          width: isSmallScreen ? "100%" : "auto",
+          flexWrap: "wrap",
+        }}
+      >
+        <Typography
+          variant="body2"
+          sx={{
+            color: "#6c757d",
+            fontSize: "14px",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Rows per page:
+        </Typography>
+        <Select
+          value={rowsPerPage}
+          onChange={(e) => onRowsPerPageChange(e.target.value as number)}
+          size="small"
+          sx={{
+            minWidth: 80,
+            "& .MuiSelect-select": {
+              py: 0.5,
+              px: 1,
+              fontSize: "14px",
+            },
+            "& .MuiOutlinedInput-notchedOutline": {
+              borderColor: "#dee2e6",
+            },
+            "&:hover .MuiOutlinedInput-notchedOutline": {
+              borderColor: "#adb5bd",
+            },
+            "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
+              borderColor: "#0d6efd",
+            },
+          }}
+        >
+          {rowsPerPageOptions.map((option) => (
+            <MenuItem key={option} value={option}>
+              {option}
+            </MenuItem>
+          ))}
+        </Select>
+      </Box>
+
+      {/* Pagination Controls */}
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: isSmallScreen ? "column" : "row",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: isSmallScreen ? 1.5 : 2,
+          width: isSmallScreen ? "100%" : "auto",
+        }}
+      >
+        {/* Button Group */}
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 0.5,
+            flexWrap: "wrap",
+          }}
+        >
+          {/* First */}
+          <IconButton
+            onClick={() => onPageChange(1)}
+            disabled={currentPage === 1}
+            size="small"
+            sx={iconButtonStyle}
+          >
+            <FirstPageIcon fontSize="small" />
+          </IconButton>
+
+          {/* Prev */}
+          <IconButton
+            onClick={() => onPageChange(currentPage - 1)}
+            disabled={currentPage === 1}
+            size="small"
+            sx={iconButtonStyle}
+          >
+            <ChevronLeftIcon fontSize="small" />
+          </IconButton>
+
+          {/* Page Numbers */}
+          {totalPages === 0 ? (
+            <IconButton size="small" disabled sx={pageButtonStyle(false)}>
+              0
+            </IconButton>
+          ) : (
+            Array.from({ length: Math.min(4, totalPages) }, (_, i) => {
+              const pageNum = i + 1;
+              return (
+                <IconButton
+                  key={pageNum}
+                  onClick={() => onPageChange(pageNum)}
+                  size="small"
+                  sx={pageButtonStyle(currentPage === pageNum)}
+                >
+                  {pageNum}
+                </IconButton>
+              );
+            })
+          )}
+
+          {/* Next */}
+          <IconButton
+            onClick={() => onPageChange(currentPage + 1)}
+            disabled={currentPage === totalPages}
+            size="small"
+            sx={iconButtonStyle}
+          >
+            <ChevronRightIcon fontSize="small" />
+          </IconButton>
+
+          {/* Last */}
+          <IconButton
+            onClick={() => onPageChange(totalPages)}
+            disabled={currentPage === totalPages}
+            size="small"
+            sx={iconButtonStyle}
+          >
+            <LastPageIcon fontSize="small" />
+          </IconButton>
+        </Box>
+
+        {/* Showing Info */}
+        <Typography
+          variant="body2"
+          color="#6c757d"
+          sx={{
+            fontSize: "14px",
+            textAlign: "center",
+            width: isSmallScreen ? "100%" : "auto",
+          }}
+        >
+          Showing {startItem} - {endItem} out of {totalItems}
+        </Typography>
+      </Box>
+    </Box>
+  );
+};
+
+// 🔹 Reusable styles
+const iconButtonStyle = {
+  border: "1px solid #dee2e6",
+  borderRadius: "4px",
+  "&:hover": {
+    backgroundColor: "#f8f9fa",
+    borderColor: "#adb5bd",
+  },
+  "&.Mui-disabled": {
+    borderColor: "#e9ecef",
+    color: "#adb5bd",
+  },
+};
+
+const pageButtonStyle = (active: boolean) => ({
+  border: "1px solid #dee2e6",
+  borderRadius: "4px",
+  minWidth: "32px",
+  height: "32px",
+  fontSize: "14px",
+  fontWeight: active ? 600 : 400,
+  backgroundColor: active ? "#0d6efd" : "transparent",
+  color: active ? "#fff" : "#6c757d",
+  "&:hover": {
+    backgroundColor: active ? "#0b5ed7" : "#f8f9fa",
+    borderColor: "#adb5bd",
+  },
+});
+
+export default CustomPagination;

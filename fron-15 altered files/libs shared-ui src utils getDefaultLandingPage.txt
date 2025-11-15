@@ -1,0 +1,51 @@
+/**
+ * Role data structure for getDefaultLandingPage
+ */
+export interface RoleData {
+  _id?: string;
+  roleName?: string;
+  roleslug?: string;
+  modules?: Array<{
+    slug?: string;
+    name?: string;
+    permissions?: {
+      create?: boolean;
+      view?: boolean;
+      update?: boolean;
+      delete?: boolean;
+    };
+  }>;
+  createdAt?: string;
+  updatedAt?: string;
+  __v?: number;
+  description?: string;
+}
+
+/**
+ * Gets the default landing page based on user permissions.
+ * Returns '/dashboard' if Dashboard is accessible, otherwise '/setting' (Settings).
+ * 
+ * @param roleData - The role data from Redux store
+ * @returns The path to the default landing page
+ */
+export function getDefaultLandingPage(roleData: RoleData | null | undefined): string {
+  // If no role data, default to Settings for safety
+  if (!roleData?.modules) {
+    return '/setting';
+  }
+
+  // Check if Dashboard module exists and has view permission
+  const dashboardModule = roleData.modules.find((mod) => 
+    mod.name?.toLowerCase() === 'dashboard' ||
+    mod.slug?.toLowerCase() === 'dashboard'
+  );
+
+  // If Dashboard exists and has view permission, use Dashboard
+  if (dashboardModule?.permissions?.view === true) {
+    return '/dashboard';
+  }
+
+  // Otherwise, default to Settings
+  return '/setting';
+}
+
